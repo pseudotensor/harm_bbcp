@@ -1,0 +1,1 @@
+nohup ~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' tg802609@ranch.tacc.utexas.edu:"thickdisk3abcdefgh thickdisk3.ijk" . >err3again.txt &

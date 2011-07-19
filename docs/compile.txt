@@ -1,0 +1,3 @@
+To compile bbcp on ranch, do: make OPT=-DSUN6 Sungcc
+
+To compile otherwise: cd src ; make clean ; make
