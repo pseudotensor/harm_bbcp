@@ -108,7 +108,7 @@ int bbcp_FileSpec::Create_Path()
 /*                                D e c o d e                                 */
 /******************************************************************************/
   
-int bbcp_FileSpec::Decode(char *buff)
+int bbcp_FileSpec::Decode(char *buff, char *xName)
 {
    char gnbuff[64], *sP;
    char fnbuff[1032], *fmt = (char *)bbcp_DEFMT;
@@ -124,8 +124,8 @@ int bbcp_FileSpec::Decode(char *buff)
 // Make sure it is correct
 //
    if (n != 9) 
-      {sprintf(fnbuff,"unable to decode item %d in file specification from",n+1);
-       return bbcp_Fmsg("Decode", fnbuff, hostname);
+      {sprintf(fnbuff,"Unable to decode item %d in file specification from",n+1);
+       return bbcp_Fmsg("Decode", fnbuff, (xName ? xName : hostname));
       }
 
 // Set up our structure
@@ -440,34 +440,38 @@ int bbcp_FileSpec::WriteSigFile()
   
 int bbcp_FileSpec::Xfr_Done()
 {
+   int rc, Force = bbcp_Config.Options & bbcp_FORCE;
 
 // If this is an APPEND request, build the signature file
 //
+//cerr <<"tsz=" <<targetsz <<" isz=" <<Info.size <<" sigf=" <<targsigf <<endl;
    if (bbcp_Config.Options & bbcp_APPEND)
-      {if (!bbcp_UFS.Stat(targsigf)) return Xfr_Fixup();
-       if (targetsz == Info.size || targetsz < 0)
-          {if (targetsz >= 0) bbcp_Fmsg("Xfr_Done", "File", targpath,
-              "appears to have already been copied; copy skipped.");
-           return (Finalize(0) ? -1 : 1);
+      {if (!bbcp_UFS.Stat(targsigf))
+          {rc = Xfr_Fixup();
+           if (rc >= 0 || !Force) return rc;
+          } else {
+           if (targetsz == Info.size || targetsz < 0)
+              {if (targetsz >= 0) bbcp_Fmsg("Xfr_Done", "File", targpath,
+                  "appears to have already been copied; copy skipped.");
+                  return (Finalize(0) ? -1 : 1);
+              }
           }
 
      // Unless force is in effect, we cannot append.
      //
-       if (!(bbcp_Config.Options & bbcp_FORCE))
-          return bbcp_Fmsg("Xfr_Done", "File", targpath,
-                "changed since the copy completed; append not possible.");
-                 bbcp_Fmsg("Xfr_Done", "File", targpath,
-                "changed since the copy completed; copy restarting.");
+       if (!Force) return bbcp_Fmsg("Xfr_Done", "File", targpath,
+                 "changed since the copy completed; append not possible.");
+       bbcp_Fmsg("Xfr_Done", "File", targpath,
+                 "changed since the copy completed; copy restarting.");
       }
 
 // The file exists, complain unless force has been specified
 //
-   if (!(bbcp_Config.Options & bbcp_FORCE))
-      return bbcp_Fmsg("Xfr_Done","File",targpath,"already exists.");
-      else targetsz = 0;
+   if (!Force) return bbcp_Fmsg("Xfr_Done","File",targpath,"already exists.");
 
 // All done, we can try to copy this file
 //
+   targetsz = 0;
    return 0;
 }
  
@@ -590,7 +594,7 @@ int bbcp_FileSpec::Xfr_Fixup()
    if ((infd = open(targsigf, O_RDONLY)) < 0)
       return bbcp_Emsg("Xfr_Fixup", -errno, "opening file", targsigf);
    TSigstream.Attach(infd);
-   if (!(lp = TSigstream.GetLine()) || TSpec.Decode(lp))
+   if (!(lp = TSigstream.GetLine()) || TSpec.Decode(lp,targsigf))
       return bbcp_Fmsg("Xfr_Fixup",
                   "Unable to determine append state for", targetfn);
 

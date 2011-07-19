@@ -612,7 +612,7 @@ int bbcp_Config::ConfigInit(int argc, char **argv)
    {struct rlimit rlim;
     if (getrlimit(RLIMIT_NOFILE, &rlim) < 0)
        bbcp_Emsg("Config",-errno,"getting FD limit");
-       else {rlim.rlim_cur = rlim.rlim_max;
+       else {rlim.rlim_cur=(rlim.rlim_max == RLIM_INFINITY ? 255:rlim.rlim_max);
              if (setrlimit(RLIMIT_NOFILE, &rlim) < 0)
                  bbcp_Emsg("config", errno, "setting FD limit");
             }
@@ -1171,7 +1171,6 @@ void bbcp_Config::setRWB(int rwbsz)
 
 // Now compute the possible R/W buffer size
 //
-cerr <<"rwbsz=" <<rwbsz <<" pgsz=" <<bbcp_OS.PageSize <<endl;
    if (rwbsz) RWBsz = rwbsz;
       else RWBsz = (Wsize > xyzRWB ? MaxRWB : Wsize + Wsize/4);
    RWBsz = (RWBsz < bbcp_OS.PageSize ? bbcp_OS.PageSize
