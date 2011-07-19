@@ -44,11 +44,11 @@ S86cc      = gcc
 
 SUNGCC64   = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 SUNGCCMT   = -D_REENTRANT -DOO_STD
-SUNGCCOPT  = -L/usr/local/lib -Wl,-rpath=/usr/local/lib -g \
+SUNGCCOPT  = -L/usr/local/lib -g \
              $(SUNGCCMT) $(SUNGCC64) $(NLGR) -DSUN
 
 SUNGCC     = g++
-SUNGCC     = gcc
+SUNGcc     = gcc
 
 LNXOPT     = $(SUN64) $(NLGR) -D_REENTRANT -DOO_STD -DLINUX -Wno-deprecated \
              -D_GNU_SOURCE -g
@@ -146,7 +146,7 @@ all:
 doitall: $(TARGET)
 
 clean:
-	@cd src;make cleanall OSVER=`../MakeSname`
+	@make cleanall OSVER=`../MakeSname`
 
 cleanall:
 	@rm -f $(OBJECT) $(BINDIR)/core $(TARGET) $(OBJDIR)/*
@@ -336,7 +336,7 @@ $(OBJDIR)/bbcp_MD5.o: bbcp_MD5.C bbcp_MD5.h bbcp_ChkSum.h bbcp_Endian.h
 	@$(CC) -c $(CFLAGS) $(INCLUDE) $(*F).C -o $(OBJDIR)/$(*F).o
 
 $(OBJDIR)/bbcp_NetLogger.o:  bbcp_NetLogger.C bbcp_NetLogger.h NetLogger.h
-	@echo Compiling bbcp_Netlogger.C
+	@echo Compiling bbcp_Netlogger.c
 	@$(CC) -c $(CFLAGS) $(INCLUDE) $(*F).C -o $(OBJDIR)/$(*F).o
 
 $(OBJDIR)/bbcp_Network.o:  bbcp_Network.C bbcp_Network.h bbcp_Debug.h \

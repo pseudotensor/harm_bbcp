@@ -103,7 +103,7 @@ bbcp_Config::bbcp_Config()
    bindwait  = 0;
    Options   = 0;
    Mode      = 0644;
-   ModeD     = 0755;
+   ModeD     = 0;
    ModeDC    = 0755;
    BAdd      = 0;
    Bfact     = 0;
@@ -191,6 +191,7 @@ bbcp_Config::~bbcp_Config()
 #define Add_Nul(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"=%d");}
 #define Add_Nup(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"+%d");}
 #define Add_Oct(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"%o");}
+#define Cat_Oct(x) {            cbp=n2a(x,&cbp[0],"%o");}
 #define Add_Str(x) {cbp[0]=' '; strcpy(&cbp[1], x); cbp+=strlen(x)+1;}
 
 #define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DeE:fFhi:I:kKl:L:m:nopP:q:rs:S:t:T:u:U:vVw:W:x:z"
@@ -394,10 +395,6 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
        Cleanup(1, argv[0], cfgfd);
       }
 
-// Get the correct directory creation mode setting
-//
-   if ((ModeD & S_IRWXU) == S_IRWXU) ModeDC = ModeD;
-
 // Get all of the filenames in the input file list
 //
    if (inFN)
@@ -467,6 +464,11 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
 //
    if (notctl) Config_Xeq(rwbsz);
       else     Config_Ctl(rwbsz);
+
+// Get the correct directory creation mode setting
+//
+   if (!ModeD) ModeD = ModeDC;
+      else if ((ModeD & S_IRWXU) == S_IRWXU) ModeDC = ModeD;
 
 // Set checkpoint directory if we do not have one here and must have one
 //
@@ -760,7 +762,11 @@ void bbcp_Config::Config_Ctl(int rwbsz)
    if (Options & bbcp_NOSPCHK)   Add_Opt('F');
    if (Options & bbcp_KEEP)      Add_Opt('k');
    if (LogSpec)                 {Add_Opt('L'); Add_Str(LogSpec);}
-                                 Add_Opt('m'); Add_Oct(Mode);
+                                 Add_Opt('m');
+   if (ModeD)                   {              Add_Oct(ModeD); *cbp++ ='/';
+                                               Cat_Oct(Mode);
+                                }
+      else                                     Add_Oct(Mode);
    if (Options & bbcp_OUTDIR || (Options & bbcp_RELATIVE && SrcBase))
                                  Add_Opt('M');
 // if (Options & bbcp_NODNS)     Add_Opt('n');
@@ -1165,6 +1171,7 @@ void bbcp_Config::setRWB(int rwbsz)
 
 // Now compute the possible R/W buffer size
 //
+cerr <<"rwbsz=" <<rwbsz <<" pgsz=" <<bbcp_OS.PageSize <<endl;
    if (rwbsz) RWBsz = rwbsz;
       else RWBsz = (Wsize > xyzRWB ? MaxRWB : Wsize + Wsize/4);
    RWBsz = (RWBsz < bbcp_OS.PageSize ? bbcp_OS.PageSize
