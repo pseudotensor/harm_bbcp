@@ -1,0 +1,11 @@
+
+Some of the discussion of my attempts with bbcp are in harmgit/docs/bbcp.txt.  But the latest bbcp (with mods by creator, who works here at SLAC, as guided by my suggestions) is at:
+
+https://harm.unfuddle.com/svn/harm_bbcp/
+
+bbcp is fully recursive, restart-capable, and validates transmissions.
+
+But, one has to ensure full copy by repeating the same command.  If the all you get are "already copied" then all went well.  If you get more things copied, then something interrupted the copy and your reissue of the same command will continue where you left off.  So in practice, one could write a script wrapper that loops over the command until no additional copies are done.
+
+Note that globus or other file transfer utilities (ftd, etc.) either don't do recursive directories or they don't restart where you left off.  E.g. scp would restart an entire copy, while bbcp will restart where it left off.
+
