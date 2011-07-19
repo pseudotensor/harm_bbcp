@@ -510,8 +510,7 @@ int bbcp_Protocol::Request(bbcp_Node *Node)
 
 // Generate a target directory ID. This will also uncover a missing directory.
 //
-// Ranch version requires FS()->FSbbcp()
-   fs_obj = bbcp_Config.snkSpec->FSbbcp();
+   fs_obj = bbcp_Config.snkSpec->FSys();
    if (texists &&  bbcp_Config.snkSpec->Info.Otype == 'd')
       tdir_id = bbcp_Config.snkSpec->Info.fileid;
       else {bbcp_FileInfo Tinfo;
@@ -558,7 +557,7 @@ int bbcp_Protocol::Request(bbcp_Node *Node)
 //
    retc = 0;
    fp = bbcp_Config.srcPath;
-   while(fp && !(retc = fp->Create_Path())) fp = fp->next;
+   while(fp && !(retc = fp->Create_Path()))  fp = fp->next;
    if (retc) return Request_exit(retc);
 
 // Get each source file
@@ -568,6 +567,15 @@ int bbcp_Protocol::Request(bbcp_Node *Node)
         {if (bbcp_Config.Options & bbcp_APPEND) totsz -= fp->targetsz;
          fp = fp->next;
         }
+
+// Now determine if we need to reset the stat info on any paths we created
+//
+   if ((fp = bbcp_Config.srcPath))
+      {if (bbcp_Config.Options & bbcp_PCOPY)
+          {while(fp && fp->setStat()) fp = fp->next;}
+          else if (bbcp_Config.ModeD != bbcp_Config.ModeDC)
+                  {while(fp && fp->setMode(bbcp_Config.ModeD)) fp = fp->next;}
+      }
 
 // Report back how many files and bytes were received
 //
@@ -635,7 +643,6 @@ int bbcp_Protocol::Request_flist(long long &totsz)
                         else bbcp_Config.srcPath = fp;
                      lastdp = fp;
                     }
-	 // Ranch version only has "else" without if() stuff
                     else if (fp->Info.Otype == 'f')
                          {numfiles++;
                           totsz += fp->Info.size;

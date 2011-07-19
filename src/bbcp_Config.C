@@ -103,6 +103,8 @@ bbcp_Config::bbcp_Config()
    bindwait  = 0;
    Options   = 0;
    Mode      = 0644;
+   ModeD     = 0755;
+   ModeDC    = 0755;
    BAdd      = 0;
    Bfact     = 0;
    BNum      = 0;
@@ -191,8 +193,6 @@ bbcp_Config::~bbcp_Config()
 #define Add_Oct(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"%o");}
 #define Add_Str(x) {cbp[0]=' '; strcpy(&cbp[1], x); cbp+=strlen(x)+1;}
 
-// Ranch version has below line instead of next line
-//#define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DeE:fFhi:I:kKl:L:m:noO:pP:q:rs:S:t:T:u:U:vVw:W:x:z"
 #define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DeE:fFhi:I:kKl:L:m:nopP:q:rs:S:t:T:u:U:vVw:W:x:z"
 #define bbcp_SSOPTIONS bbcp_VALIDOPTS "MH:Y:"
 
@@ -205,11 +205,8 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
 {
    bbcp_FileSpec *lfsp;
    int n, retc, xTrace = 1, infiles = 0, notctl = 0, rwbsz = 0;
-   const char *exOP;
-   char *inFN=0, c, cbhname[MAXHOSTNAMELEN+1];
+   char *Slash, *inFN=0, c, cbhname[MAXHOSTNAMELEN+1];
    bbcp_Args arglist((char *)"bbcp: ");
-   // Ranch version has below:
-   //   int  tval, Uwindow= 0;
 
 // Make sure we have at least one argument
 //
@@ -292,18 +289,19 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
                  break;
        case 'L': if (LogOpts(arglist.argval)) Cleanup(1, argv[0], cfgfd);
                  break;
-       case 'm': if (a2o("mode", arglist.argval, Mode, 1, 07777))
-                    Cleanup(1, argv[0], cfgfd);
+       case 'm': if ((Slash = index(arglist.argval, '/')))
+                    {*Slash = '\0';
+                     if (a2o("dirmode", arglist.argval, ModeD, 1, 07777))
+                        Cleanup(1, argv[0], cfgfd);
+                     if (*(Slash+1) && a2o("mode", Slash+1, Mode, 1, 07777))
+                        Cleanup(1, argv[0], cfgfd);
+                    } else if (a2o("mode", arglist.argval, Mode, 1, 07777))
+                              Cleanup(1, argv[0], cfgfd);
                  break;
        case 'M': Options |= bbcp_OUTDIR;
                  break;
        case 'n': Options |= bbcp_NODNS;
                  break;
-		 // Ranch version has below -O option
-		 //       case 'O': if (a2n("milliseconds",arglist.argval,tval,30000,120000))
-		 //		   Cleanup(1, argv[0], cfgfd);
-		 //	            accwait = tval;
-		 //   	         break;
        case 'o': Options |= bbcp_ORDER;
                  break;
        case 'p': Options |= bbcp_PCOPY;
@@ -377,16 +375,9 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
 
 // Check for options mutually exclsuive with '-a'
 //
-   if ((Options & bbcp_APPEND))
-      {     if (Options & bbcp_FORCE)    exOP = "-f";
-       else if (Options & bbcp_NOUNLINK) exOP = "-K";
-       else if (*csString)               exOP = "-E =";
-       else if (csOpts & bbcp_csPrint)   exOP = "-E =";
-       else                              exOP = 0;
-	if (exOP)
-       {bbcp_Fmsg("Config", "-a and", (char*)exOP, "are mutually exclusive.");
-           Cleanup(1, argv[0], cfgfd);
-          }
+   if ((Options & bbcp_APPEND) && (*csString || (csOpts & bbcp_csPrint)))
+      {bbcp_Fmsg("Config", "-a and -E ...= are mutually exclusive.");
+       Cleanup(1, argv[0], cfgfd);
       }
 
 // Check for options mutually exclusice with '-r'
@@ -402,6 +393,10 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
       {bbcp_Fmsg("Config", "-k and -K are mutually exclusive.");
        Cleanup(1, argv[0], cfgfd);
       }
+
+// Get the correct directory creation mode setting
+//
+   if ((ModeD & S_IRWXU) == S_IRWXU) ModeDC = ModeD;
 
 // Get all of the filenames in the input file list
 //
@@ -539,7 +534,8 @@ H("-k      keep the destination file even when the copy fails.")
 H("-K      do not rm the file when -f specified, only truncate it.")
 H("-l logf logs standard error to the specified file.")
 H("-L args sets the logginng level and log message destination.")
-H("-m mode target file mode (default is 0644 or comes via -p option).")
+H("-m mode target file mode as [dmode/][fmode] but one mode must be present.")
+H("        Default dmode is 0755 and fmode is 0644 or it comes via -p option.")
 H("-s snum number of network streams to use (default is 4).")
 H("-p      preserve source mode, ownership, and dates.")
 H("-P sec  produce a progress message every sec seconds (15 sec minimum).")

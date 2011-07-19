@@ -29,31 +29,26 @@ MKPARMS  = doitall
 NLGR       = -DNL_THREADSAFE
 
 SUN64      = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-SUNMT      = -D_REENTRANT -DOO_STD
-#-mt
-#SUNOPT     = -O2 -Wl,-rpath=/usr/local/lib #-fsimple -fast
-SUNOPT     = -L/usr/local/lib -Wl,-rpath=/usr/local/lib -g  $(SUNMT) $(SUN64) $(NLGR) -DSUN
- #-fsimple
+SUNMT      = -D_REENTRANT -DOO_STD -mt
+SUNOPT     = -O2 -fsimple -fast
+SUNOPT     = -g  -fsimple $(SUNMT) $(SUN64) $(NLGR) -DSUN
 
-SUNCC	= g++
-SUNcc	= gcc
-
-
-
-
-#SUN64      = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
-#SUNMT      = -D_REENTRANT -DOO_STD -mt
-#SUNOPT     = -O2 -fsimple -fast
-#SUNOPT     = -g  -fsimple $(SUNMT) $(SUN64) $(NLGR) -DSUN
-#SUNCC      = CC
-#SUNcc      = cc
-#SUNCC      = /opt/SUNWspro.WS7/bin/CC
+SUNCC      = CC
+SUNcc      = cc
 
 S86OPT     = -D_REENTRANT -DOO_STD $(NLGR) -DSUN -DSUNX86 -Wno-deprecated
 S86OPT     = $(SUNOPT) -DSUNX86 
 
 S86CC      = CC
 S86cc      = gcc
+
+SUNGCC64   = -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+SUNGCCMT   = -D_REENTRANT -DOO_STD
+SUNGCCOPT  = -L/usr/local/lib -Wl,-rpath=/usr/local/lib -g \
+             $(SUNGCCMT) $(SUNGCC64) $(NLGR) -DSUN
+
+SUNGCC     = g++
+SUNGCC     = gcc
 
 LNXOPT     = $(SUN64) $(NLGR) -D_REENTRANT -DOO_STD -DLINUX -Wno-deprecated \
              -D_GNU_SOURCE -g
@@ -145,7 +140,7 @@ OBJECT =      \
 TARGET  = $(BINDIR)/bbcp
 
 all:
-	@cd src;make make`/bin/uname` OSVER=`../MakeSname`
+	@make `uname` OSVER=`../MakeSname`
 	@echo Make done.
 
 doitall: $(TARGET)
@@ -157,14 +152,14 @@ cleanall:
 	@rm -f $(OBJECT) $(BINDIR)/core $(TARGET) $(OBJDIR)/*
 
 usage:
-	@echo "Usage: make [echo | usage] [OPT=-DSUN6] [{AIX|BSD|LNX|SUN|S86}CC=ccpath]"
+	@echo "Usage: make [echo | usage] [OPT=-DSUN6] [Sungcc]"
 
 echo:		
 	@for f in $(SOURCE); do \
 	echo $$f ;\
 	done
 
-makeAIX:
+AIX:
 	@make $(MKPARMS) \
 	CC=$(AIXCC) \
 	BB=$(AIXcc) \
@@ -173,7 +168,7 @@ makeAIX:
 	INCLUDE="$(ENVINCLUDE)"  \
 	LIBS="$(AIXLIBS)"
 
-makeFreeBSD:
+FreeBSD:
 	@make $(MKPARMS)  \
 	CC=$(BSDCC) \
 	BB=$(BSDcc) \
@@ -181,7 +176,7 @@ makeFreeBSD:
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(BSDLIBS)"
 
-makeLinux:
+Linux:
 	@make makeLinux`/bin/uname -i`
 
 makeLinuxi386:
@@ -202,15 +197,16 @@ makeLinuxx86_64:
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(LNXLIBS64)"
 
-makeDarwin:
-	@make $(MKPARMS)  \
+Darwin:
+	@MACOSX_DEPLOYMENT_TARGET=10.5;\
+	make $(MKPARMS)  \
 	CC=$(MACCC) \
 	BB=$(MACcc) \
 	CFLAGS="$(ENVCFLAGS) $(MACOPT) $(OPT)" \
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(MACLIBS)"
 
-makeUNICOS/mp:
+UNICOS/mp:
 	@make $(MKPARMS)  \
  	CC=$(LNXCC) \
  	BB=$(LNXcc) \
@@ -219,7 +215,7 @@ makeUNICOS/mp:
  	INCLUDE="$(ENVINCLUDE)" \
  	LIBS="$(LNXLIBS)"
 
-makeSunOS:
+SunOS:
 	@make $(MKPARMS)  \
 	CC=$(SUNCC) \
 	BB=$(SUNcc) \
@@ -227,13 +223,22 @@ makeSunOS:
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(SUNLIBS)"
 
-makeSunX86:
+SunX86:
 	@make $(MKPARMS)  \
 	CC=$(S86CC) \
 	BB=$(S86cc) \
 	CFLAGS="$(ENVCFLAGS) $(S86OPT) $(OPT)" \
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(SUNLIBSO)"
+
+Sungcc:
+	@make $(MKPARMS)  \
+	CC=$(SUNGCC) \
+	BB=$(SUNGcc) \
+	CFLAGS="$(ENVCFLAGS) $(SUNGCCOPT) $(OPT)" \
+	INCLUDE="$(ENVINCLUDE)" \
+	LIBS="$(SUNLIBSO)" \
+	OSVER=`../MakeSname`
 
 $(TARGET): $(OBJECT)
 	@echo Creating executable $(TARGET) ...

@@ -21,11 +21,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-// Ranch version changed below 2 lines
-//#if defined(SUN)
-#if !defined(FREEBSD) && !defined(MACOS) && !defined(AIX)
+#if defined(SUN) || defined(LINUX)
 #include <stropts.h>
-#include <sys/stropts.h>
 #endif
 
 #include "bbcp_Debug.h"
