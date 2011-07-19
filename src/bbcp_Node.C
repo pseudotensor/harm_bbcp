@@ -287,11 +287,9 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 
 // Perform Force or Append processing
 //
-
-// Ranch version requires FS()->FSbbcp()
         if (bbcp_Config.Options & bbcp_FORCE)
            {if (!(bbcp_Config.Options & bbcp_NOUNLINK))
-               fp->FSbbcp()->RM(fp->targpath);
+               fp->FSys()->RM(fp->targpath);
             oflag = O_WRONLY | O_CREAT | O_TRUNC;
            }
    else if (bbcp_Config.Options & bbcp_APPEND)
@@ -337,13 +335,13 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 
 // Request direct I/O if so wanted
 //
-   if (bbcp_Config.Options & bbcp_ODIO) {fp->FSbbcp()->DirectIO(1);
+   if (bbcp_Config.Options & bbcp_ODIO) {fp->FSys()->DirectIO(1);
        DEBUG("Direct output requested.");}
 
 // Open the file and set the starting offset
 //
    Elapsed_Timer.Start();
-   if (!(outFile = fp->FSbbcp()->Open(fp->targpath, oflag, 0200)))
+   if (!(outFile = fp->FSys()->Open(fp->targpath, oflag, 0200)))
       return bbcp_Emsg("RecvFile", errno, "opening", fp->targpath);
    if (startoff && ((retc = outFile->Seek(startoff)) < 0))
       return bbcp_Emsg("RecvFile",retc,"setting write offset for",fp->targpath);
@@ -422,7 +420,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
    outFile->Close();
    if (!retc && strncmp(fp->targpath, "/dev/null/", 10))
       {bbcp_FileInfo Info;
-       if ((retc = fp->FSbbcp()->Stat(fp->targpath, &Info)) < 0)
+       if ((retc = fp->FSys()->Stat(fp->targpath, &Info)) < 0)
           {retc = -retc;
            bbcp_Emsg("RecvFile", retc, "finding", fp->targpath);
           }
@@ -494,12 +492,12 @@ int bbcp_Node::SendFile(bbcp_FileSpec *fp)
 
 // Request direct I/O if so wanted
 //
-   if (bbcp_Config.Options & bbcp_IDIO) {fp->FSbbcp()->DirectIO(1);
+   if (bbcp_Config.Options & bbcp_IDIO) {fp->FSys()->DirectIO(1);
        DEBUG("Direct input requested.");}
 
 // Open the input file and set starting offset
 //
-   if (!(inFile = fp->FSbbcp()->Open(fp->pathname, oflag)))
+   if (!(inFile = fp->FSys()->Open(fp->pathname, oflag)))
       {bbcp_Emsg("SendFile", errno, "opening", fp->pathname);
        exit(2);
       }

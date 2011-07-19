@@ -46,11 +46,11 @@ void             ExtendFileSpec(bbcp_FileSpec* headp);
 
 int              Finalize(int retc=0);
 
-//bbcp_FileSystem *FS() {return FSp;}
-// Ranch version uses below to compile properly:
-bbcp_FileSystem *FSbbcp() {return FSp;}
+bbcp_FileSystem *FSys() {return FSp;}
 
 void             Parse(char *spec);
+
+int              setMode(mode_t Mode);
 
 int              setStat();
 

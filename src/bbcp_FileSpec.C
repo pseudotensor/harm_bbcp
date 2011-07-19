@@ -68,7 +68,7 @@ int bbcp_FileSpec::Compose(long long did, char *dpath, int dplen, char *fname)
        if ((rp = rindex(targetfn,'/'))) rp++;
           else rp = targetfn;
        snprintf(buff, sizeof(buff)-1, "%s/bbcp.%s.%llx.%s",
-                bbcp_Config.CKPdir, hostname, did, rp); // Ranch version had targetfn here instead of rp
+                bbcp_Config.CKPdir, hostname, did, rp);
        buff[sizeof(buff)-1] = '\0';
        targsigf = strdup(buff);
        DEBUG("Append signature file is " <<targsigf);
@@ -76,7 +76,7 @@ int bbcp_FileSpec::Compose(long long did, char *dpath, int dplen, char *fname)
 
 // Get the current state of the file
 //
-   if (retc = FSp->Stat(targpath, &Targ)) targetsz = 0; // Ranch version has targetsz=-1 here as well
+   if (retc = FSp->Stat(targpath, &Targ)) targetsz = 0;
       else if (Targ.Otype != 'f') targetsz = -1;
               else targetsz = (long long)Targ.size;
    return retc == 0;
@@ -88,48 +88,21 @@ int bbcp_FileSpec::Compose(long long did, char *dpath, int dplen, char *fname)
 
 int bbcp_FileSpec::Create_Path()
 {
-   int retc, mode;
+   int retc;
 
-// Create the path and accept "already exists" errors
+// Create the path and accept "already exists" errors. Note that we use the
+// temporary creation mode which gaurentees that we can actually place files
+// in the directory. This will later be set to the true mode if it differs.
 //
    DEBUG("Make path " <<Info.mode <<' ' <<targpath);
-   if (retc = FSp->MKDir(targpath, Info.mode))
+   if (retc = FSp->MKDir(targpath, bbcp_Config.ModeDC))
       if (retc == -EEXIST) return 0;
          else return bbcp_Emsg("Create_Path", retc, "creating path", targpath);
-
-// If we need to retain times and group then do so
-//
-   if (bbcp_Config.Options & bbcp_PCOPY) setStat();
 
 // All done
 //
    return 0;
 }
-
-// Ranch version is below
-// int bbcp_FileSpec::Create_Path()
-// {
-//    int retc, mode;
-
-// // Establish correct mode and group
-// //
-//    mode = (bbcp_Config.Options & bbcp_PCOPY ? Info.mode : bbcp_Config.Mode);
-
-// // Create the path and accept "already exists" errors
-// //
-//    if (retc = FSp->MKDir(targpath, mode))
-//       if (retc == -EEXIST) return 0;
-//          else return bbcp_Emsg("Create_Path", retc, "creating path", targpath);
-
-// // If we need to retain times and group then do so
-// //
-//    if (bbcp_Config.Options & bbcp_PCOPY) setStat();
-
-// // All done
-// //
-//    return 0;
-// }
-
 
 /******************************************************************************/
 /*                                D e c o d e                                 */
@@ -202,7 +175,6 @@ void bbcp_FileSpec::ExtendFileSpec(bbcp_FileSpec* headp)
    struct stat    sbuf;
    DIR           *dirp;
 
-   // Ranch version does not have the below conditional or above sbuf variable.
    // To avoid potentially serious copy loops, if pathname is not a true 
    // directory, we do not extend it. Eventually, we will recreate symlinks 
    // in the target node.
@@ -286,9 +258,6 @@ int bbcp_FileSpec::Finalize(int retc)
        FSp->RM(targpath);
       }
       else if (bbcp_Config.Options & bbcp_PCOPY) setStat();
-   // Ranch version doesn't have below else if conditional and instead has below commented out code:
-   //else if (bbcp_Config.Options & bbcp_PCOPY) setStat();
-   //              else FSp->setMode((const char *)targpath, 0644);
               else if (Info.Otype == 'f')
                       FSp->setMode(targpath, bbcp_Config.Mode);
 
@@ -355,6 +324,25 @@ void bbcp_FileSpec::Parse(char *spec)
            filename = pathrltv;
           }
       }
+}
+
+/******************************************************************************/
+/*                               s e t M o d e                                */
+/******************************************************************************/
+
+int bbcp_FileSpec::setMode(mode_t Mode)
+{
+   int retc;
+
+// Make sure we have a filesystem here
+//
+   if (!FSp) return bbcp_Fmsg("setStat", "no filesystem for", targpath);
+
+// Set the mode
+//
+   if ((retc = FSp->setMode (targpath, Mode)))
+      return bbcp_Emsg("setStat", -retc, "setting mode on", targpath);
+   return 0;
 }
 
 /******************************************************************************/
@@ -450,34 +438,6 @@ int bbcp_FileSpec::WriteSigFile()
 /*                              X f r _ D o n e                               */
 /******************************************************************************/
   
-//int bbcp_FileSpec::Xfr_Done()
-// {
-
-// // If this is an APPEND request, build the signature file
-// //
-//    if (bbcp_Config.Options & bbcp_APPEND)
-//       {if (!bbcp_UFS.Stat(targsigf)) return Xfr_Fixup();
-//        if (targetsz == Info.size || targetsz < 0) // Ranch does not have the || targetsz < 0 conditional
-//           {if (targetsz >= 0) bbcp_Fmsg("Xfr_Done", "File", targpath,
-//               "appears to have already been copied; copy skipped.");
-//            return (Finalize(0) ? -1 : 1);
-//           }
-//        return bbcp_Fmsg("Xfr_Done", "File", targpath,
-//        "appears to have changed since the copy completed; append not possible.");
-//       }
-
-// // The file exists, complain unless force has been specified
-// //
-//    if (!(bbcp_Config.Options & bbcp_FORCE))
-//       return bbcp_Fmsg("Xfr_Done","File",targpath,"already exists.");
-//       else targetsz = 0;
-
-// // All done, we can try to copy this file
-// //
-//    return 0;
-// }
-
-
 int bbcp_FileSpec::Xfr_Done()
 {
 
@@ -490,39 +450,14 @@ int bbcp_FileSpec::Xfr_Done()
               "appears to have already been copied; copy skipped.");
            return (Finalize(0) ? -1 : 1);
           }
-       // JCM: Silly to not copy file wanted to copy because of some prior copy problem that makes append not possible for whatever reason
-       //       return bbcp_Fmsg("Xfr_Done", "File", targpath, (char *)
-       //       "appears to have changed since the copy completed; append not poosible.");
-       bbcp_Fmsg("Xfr_Done", "File", targpath, (char *)
-		 "appears to have changed since the copy completed; append not possible.");
-       // JCM: Must quite now since below force check will say file already exists
 
-       //       fprintf(stderr,"targpath=%s\n",targpath);
-       //       if(strcmp("*",targpath)!=0 && strcmp("/ ",targpath)!=0){ // protect against rm -rf * and rm -rf /
-       struct stat st_buf;
-       int status;
-       status = stat(targpath,&st_buf);
-       if(status!=0){
-	 fprintf(stderr,"Error with status: %d %d\n",status,errno);
-       }
-       else{
-	 int filetype,dirtype;
-	 filetype = S_ISREG(st_buf.st_mode);
-	 dirtype=S_ISDIR(st_buf.st_mode);
-
-	 // protect against rm -rf * and rm -rf / and don't remove directories
-	 if(strcmp("*",targpath)!=0 && strcmp("/ ",targpath)!=0 && dirtype==0 && filetype==1){
-	   bbcp_Fmsg("Xfr_Done", "File", targpath, (char *)
-		     "Forcing fresh copy.");
-	   
-	   char mystring[4096];
-	   sprintf(mystring,"rm -rf %s",targpath);
-	   fprintf(stderr,"trying: %s\n",mystring);
-	   system(mystring);
-	   targetsz = 0;
-	   return(0);
-	 }// end if removing bad file
-       }// end else if recognize type
+     // Unless force is in effect, we cannot append.
+     //
+       if (!(bbcp_Config.Options & bbcp_FORCE))
+          return bbcp_Fmsg("Xfr_Done", "File", targpath,
+                "changed since the copy completed; append not possible.");
+                 bbcp_Fmsg("Xfr_Done", "File", targpath,
+                "changed since the copy completed; copy restarting.");
       }
 
 // The file exists, complain unless force has been specified
