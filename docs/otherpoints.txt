@@ -10,3 +10,6 @@ But, one has to ensure full copy by repeating the same command.  If the all you 
 Note that globus or other file transfer utilities (ftd, etc.) either don't do recursive directories or they don't restart where you left off.  E.g. scp would restart an entire copy, while bbcp will restart where it left off.
 
 One should install this bbcp on both ends and use it instead of the local bbcp.
+
+
+I've gotten an average of 50MB/s between Teragrid computers.  I've gotten an average of 20MB/s from Teragrid to my local machine here.  However, it's very computer dependent.  Also, one shouldn't use too many streams or else the computer networks can't handle those connections before timing out.
