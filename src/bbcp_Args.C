@@ -31,14 +31,14 @@ public:
 int  operator==(char *optarg)
        {int i = strlen(optarg);
         return i <= Optmaxl && i >= Optminl &&
-               !strncmp((const char *)Optword, optarg, i);
+               !strncmp(Optword, optarg, i);
        }
 
 char *operator%(char *optarg)
         {int i = strlen(optarg);
          bbcp_Opt *p = this;
          do if (i <= p->Optmaxl && i >= p->Optminl &&
-               !strncmp((const char *)p->Optword, optarg, i)) return p->Optvalu;
+               !strncmp(p->Optword, optarg, i)) return p->Optvalu;
             while(p = p->Optnext);
          return 0;
         }
@@ -150,9 +150,9 @@ char bbcp_Args::getopt()
 
 // Check for extended options or single letter option
 //
-   if (optp && strlen((const char *)curopt) > 2 && *curopt == '-'
+   if (optp && strlen(curopt) > 2 && *curopt == '-'
    && (optspec = *optp%curopt)) {}
-      else if (!(optspec = index((const char *)vopts, (int)(*curopt)))
+      else if (!(optspec = index(vopts, (int)(*curopt)))
            || *curopt == ':' || *curopt == '.')
               {cerr <<epfx <<"Invalid option, '-" <<*curopt <<"'." <<endl;
                endopts = 1;

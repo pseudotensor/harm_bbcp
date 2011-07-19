@@ -23,9 +23,29 @@
 #include "bbcp_LogFile.h"
 #include "bbcp_Platform.h"
 
-#ifdef MACOS
-#define O_DSYNC 0
-#endif
+/******************************************************************************/
+/*                         L o c a l   C l a s s e s                          */
+/******************************************************************************/
+  
+class bbcp_LogFiler
+{
+public:
+
+bbcp_LogFiler *Next;
+bbcp_LogFile  *LogF;
+char          *Name;
+pthread_t      LogT;
+int            ErFD;  //  Input file descriptor
+
+      bbcp_LogFiler(bbcp_LogFile *lfP, char *name, int efd)
+                        : Next(0), LogF(lfP), Name(strdup(name)), LogT(0),
+                          ErFD(efd) {}
+     ~bbcp_LogFiler() {if (Name)      free(Name);
+                       if (ErFD >= 0) close(ErFD);
+                       if (LogT)      bbcp_Thread_Cancel(LogT);
+                       if (Next)      delete Next;
+                      }
+};
 
 /******************************************************************************/
 /*           E x t e r n a l   I n t e r f a c e   R o u t i n e s            */
@@ -35,24 +55,10 @@ extern "C"
 {
 void *bbcp_FileLog(void *op)
 {
-     bbcp_LogFile *lfp = (bbcp_LogFile *)op;
-     lfp->Record();
+     bbcp_LogFiler *lrP = (bbcp_LogFiler *)op;
+     bbcp_LogFile::Record(lrP);
      return (void *)0;
 }
-}
-
-/******************************************************************************/
-/*                           C o n s t r u c t o r                            */
-/******************************************************************************/
-  
-bbcp_LogFile::bbcp_LogFile()
-{
-   fdcnt   = 0;
-   Logfd   = 0;
-   Logfn   = 0;
-   Logtid  = 0;
-   Sigfd   = 0;
-   notdone = 1;
 }
 
 /******************************************************************************/
@@ -61,33 +67,16 @@ bbcp_LogFile::bbcp_LogFile()
   
 bbcp_LogFile::~bbcp_LogFile()
 {
-   int i;
+   static const char *Eol = "=-=-=-=-=-=-=-=\n";
 
-// If the monitor thread is active, stop it
+// Close the log file and delete the log list which will clean everything
 //
-   if (Logtid)
-      {notdone = 0;
-       write(Sigfd, "x", 1);
-       bbcp_Thread_Wait(Logtid);
+   if (Logfd >= 0)
+      {write(Logfd, Eol, strlen(Eol));
+       close(Logfd);
       }
-
-// Close the log file and signal pipe
-//
-   if (Logfd) close(Logfd);
    if (Logfn) free(Logfn);
-   if (Sigfd) close(Sigfd);
-
-// Cleanup all other file descriptors
-//
-   for (i = 0; i < fdcnt; i++)
-       {close(fdmon[i]);
-        if (fdid[i]) free(fdid[i]);
-        if (fdstr[i]) {fdstr[i]->Detach(); delete fdstr[i];}
-       }
-
-// All done
-//
-   return;
+   delete Loggers;
 }
 
 /******************************************************************************/
@@ -96,31 +85,19 @@ bbcp_LogFile::~bbcp_LogFile()
   
 int bbcp_LogFile::Open(const char *fname)
 {
-   int fildes[2], logfd;
 
 // Check if we have a logfile already
 //
-   if (Logfd) return -ETXTBSY;
+   if (Logfd >= 0) return -ETXTBSY;
 
 // Open the log file
 //
-   if ((logfd = open(fname, O_WRONLY | O_CREAT | O_APPEND | O_DSYNC, 0644)) < 0)
-      return bbcp_Emsg("LogFile", -errno, "opening", (char *)fname);
+   if ((Logfd = open(fname, O_WRONLY | O_CREAT | O_APPEND | O_DSYNC, 0644)) < 0)
+      return bbcp_Emsg("LogFile", -errno, "opening", fname);
 
 // Set up for logging
 //
-   Logfd   = logfd;
-   Logfn   = strdup(fname);
-
-// Get a pipe to signal the monitoring thread of any changes
-//
-   if (pipe(fildes))
-      return bbcp_Emsg("LogFile", -errno, "allocating a signal pipe.");
-   fdmon[0] = fildes[0];
-   fdid[0]  = strdup("Signal pipe");
-   fdstr[0] = 0;
-   Sigfd    = fildes[1];
-   fdcnt    = 1;
+   Logfn = strdup(fname);
 
 // All done
 //
@@ -133,158 +110,58 @@ int bbcp_LogFile::Open(const char *fname)
   
 void bbcp_LogFile::Monitor(int fdnum, char *fdname)
 {
-   int retc = 0;
+   bbcp_LogFiler *lrP = new bbcp_LogFiler(this, fdname, fdnum);
+   int retc;
 
+// Start a log file thread (we loose storage upon failure)
+//
+   if ((retc = bbcp_Thread_Run(bbcp_FileLog, (void *)lrP, &(lrP->LogT))))
+      {bbcp_Emsg("LogFile", errno, "start logging thread to", Logfn);
+       return;
+      }
+
+// Chain this logger into out list of loggers
+//
    Flog.Lock();
-   if (fdcnt < BBCP_LOGFILE_MAX) 
-      {fdid[fdcnt] = strdup(fdname); fdmon[fdcnt++] = fdnum;}
-      else retc = bbcp_Fmsg("LogFile", "Logfile monitoring capacity exceeded;",
-                                       fdname, (char *)"not being logged.");
+   lrP->Next = Loggers; Loggers = lrP;
    Flog.UnLock();
-   if (retc) return;
-
-// If we have a monitoring thread, signal it otherwise start a new thread
-//
-   if (Logtid) write(Sigfd, "x", 1);
-      else {retc = bbcp_Thread_Start(bbcp_FileLog, (void *)this, &Logtid);
-            DEBUG("Thread " <<Logtid <<" assigned to logging,");
-           }
-
-// Create a stream for this file descriptor to avoid line breakage
-//
-   fdstr[fdcnt-1] = new bbcp_Stream();
-   fdstr[fdcnt-1]->Attach(fdnum);
-
-// All done
-//
-   return;
+   DEBUG("Thread " <<lrP->LogT <<" assigned to logging " <<fdname);
 }
  
 /******************************************************************************/
 /*                                R e c o r d                                 */
 /******************************************************************************/
 
-void bbcp_LogFile::Record()
+void bbcp_LogFile::Record(bbcp_LogFiler *lrP)
 {
-   int i, pollcnt;
-   struct pollfd pollv[BBCP_LOGFILE_MAX];
-
-// In a big loop, wait for any activity from monitored fd's and write to the
-// log file as well as to standard error.
-//
-while (notdone)
-      {
-      // Lock against simultaneous access to get the fd's
-      //
-      Flog.Lock();
-      for (pollcnt = 0; pollcnt < fdcnt; pollcnt++)
-          {pollv[pollcnt].fd      = fdmon[pollcnt];
-           pollv[pollcnt].events  = POLLIN | POLLRDNORM;
-           pollv[pollcnt].revents = 0;
-          }
-      Flog.UnLock();
-
-      // Issue the poll
-      //
-      pollcnt--;
-      if (poll(pollv, pollcnt, -1) < 0)
-         {if (errno == EINTR || errno == EAGAIN) continue;
-          bbcp_Emsg("LogFile", errno, "polling file descriptors.");
-         }
-
-      // Process all events
-      //
-      for (i = 0; i < pollcnt; i++)
-          {     if (pollv[i].revents & (POLLIN  | POLLRDNORM)) Process(i);
-           else if (pollv[i].revents & POLLHUP)                Remove(i, 0);
-           else if (pollv[i].revents & (POLLERR | POLLNVAL))   Remove(i, 1);
-          }
-      }
-
-DEBUG("Logging terminated.");
-return;
-}
-  
-/******************************************************************************/
-/*                       P r i v a t e   M e t h o d s                        */
-/******************************************************************************/
-/******************************************************************************/
-/*                               P r o c e s s                                */
-/******************************************************************************/
-  
-void bbcp_LogFile::Process(int fdi)
-{
-   int FD = fdmon[fdi];
-   char         tbuff[24];
-   struct iovec iolist[3];
    static bbcp_Mutex logMutex;
+   bbcp_Timer  Mytime;
+   bbcp_Stream inData;
+   char *inLine, tbuff[24];
+   struct iovec iolist[3] = {{(caddr_t)tbuff, 0}, {0,0}, {(char *)"\n", 1}};
+   int LogFD = lrP->LogF->Logfd;
 
-// Read and toss data if we don't have a stream or it's the 1st fd
+// Attach the file descriptor to the stream
 //
-   if (!fdi || !fdstr[fdi])
-      {char xbuff[16];
-       read(fdmon[fdi], (void *)xbuff, (size_t)sizeof(xbuff));
-       return;
-      }
+   inData.Attach(lrP->ErFD);
 
-// Get a full line from the stream to avoid line splittage in the log
+// Get a full line from the stream to avoid line splittage in the log and
+// write it out to the lof file adding appropriate headers.
 //
-   if (!(iolist[1].iov_base = fdstr[fdi]->GetLine()))
-      {Remove(fdi, 0);
-       return;
-      }
+   while((inLine = inData.GetLine()))
+        {if (!(*inLine)) continue;
+         logMutex.Lock();
+         if (LogFD)
+            {tbuff[0] = '\0';
+             iolist[0].iov_len   = Mytime.Format(tbuff);
+             iolist[1].iov_base  = inLine;
+             iolist[1].iov_len   = strlen(inLine);
 
-// Construct the message to be sent
-//
-    tbuff[0] = '\0'; 
-    iolist[0].iov_base  = (caddr_t)tbuff;
-    iolist[0].iov_len   = Mytime.Format(tbuff);
-    iolist[1].iov_len   = strlen((char *)iolist[1].iov_base);
-    iolist[2].iov_base  = (char *)"\n";
-    iolist[2].iov_len   = 1;
-
-// Write the data to the log
-//
-   logMutex.Lock();
-   if (Logfd && (writev(Logfd, (const struct iovec *)&iolist, 3) < 0))
-      {bbcp_Emsg("LogFile", errno, "writing log to", Logfn);
-       close(Logfd);
-       Logfd = 0;
-      }
-
-// Write the message to standard error and return
-//
-   cerr <<iolist[1].iov_base <<endl;
-   logMutex.UnLock();
-   return;
-}
- 
-/******************************************************************************/
-/*                                R e m o v e                                 */
-/******************************************************************************/
-  
-void bbcp_LogFile::Remove(int fdi, int emsg)
-{
-   int i, j=0;
-
-// If and error message wanted, issue message
-//
-   if (emsg) bbcp_Fmsg("LogFile","Polling error occured monitoring",fdid[fdi]);
-
-// Close and free up the description
-//
-   close(fdmon[fdi]);
-   free(fdid[fdi]);
-
-// Remove the offending fd
-//
-   Flog.Lock();
-   for (i = 0; i < fdcnt-1; i++)
-       if (i != fdi && j != i) {fdmon[j] = fdmon[i]; fdid[j++] = fdid[i];}
-   fdcnt = fdcnt-1;
-   Flog.UnLock();
-
-// All done
-//
-   return;
+             if (writev(LogFD, (const struct iovec *)&iolist, 3) < 0)
+                {bbcp_Emsg("LogFile",errno,"writing log to",lrP->LogF->Logfn);
+                 LogFD = 0;
+                }
+            } else cerr <<inLine <<endl;
+         logMutex.UnLock();
+        }
 }

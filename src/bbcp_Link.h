@@ -14,9 +14,9 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include "bbcp_BuffPool.h"
+#include "bbcp_ChkSum.h"
 #include "bbcp_File.h"
 #include "bbcp_IO.h"
-#include "bbcp_MD5.h"
 #include "bbcp_Pthread.h"
 
 // The bbcp_Link class defines the operations on a network link.
@@ -25,7 +25,7 @@ class bbcp_Link
 {
 public:
 
-int          Close() {if (md5obj) delete md5obj; return IOB.Close();}
+int          Close() {if (csObj) delete csObj; return IOB.Close();}
 
 int          FD() {return IOB.FD();}
 
@@ -37,7 +37,7 @@ int          Buff2Net();
 
 int          Net2Buff();
 
-             bbcp_Link(int newfd=-1, const char *newfn="", int getmd5obj=0);
+             bbcp_Link(int newfd=-1, const char *newfn="");
             ~bbcp_Link() {Close(); if (Lname) free(Lname);}
 
 int          LinkNum;
@@ -47,7 +47,7 @@ private:
 bbcp_Link      *Buddy;
 bbcp_Semaphore  Rendezvous;
 bbcp_IO         IOB;
-bbcp_MD5       *md5obj;
+bbcp_ChkSum    *csObj;
 char           *Lname;
 
 int        ClockData();

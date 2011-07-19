@@ -49,20 +49,21 @@ bbcp_FileSystem *fs_obj;
 char            *tdir;
 long long        tdir_id;
 
-int  AdjustWS(const char *who, char *wp);
-int  getCBPort(bbcp_Node *Node);
-void getEnd(bbcp_Node *Node);
+int   AdjustWS(char *wp, char *bp, int Final);
+int   getCBPort(bbcp_Node *Node);
+void  getEnd(bbcp_Node *Node);
+void  putCSV(char *Host, char *csFn, char *csVal, int csVsz);
 
-int  Process_exit();
-int  Process_flist();
-int  Process_get();
-int  Process_login(bbcp_Link *Net);
+int   Process_exit();
+int   Process_flist();
+int   Process_get();
+int   Process_login(bbcp_Link *Net);
 
-int  Request_exit(int retc);
-int  Request_flist(long long &totsz);
-int  Request_get(bbcp_FileSpec *fp);
-int  Request_login(bbcp_Link *Net);
+int   Request_exit(int retc);
+int   Request_flist(long long &totsz);
+int   Request_get(bbcp_FileSpec *fp);
+int   Request_login(bbcp_Link *Net);
 
-int  SendArgs(bbcp_Node *Node, bbcp_FileSpec *fsp, char *cbhost, int cbport);
+int   SendArgs(bbcp_Node *Node, bbcp_FileSpec *fsp, char *cbhost, int cbport);
 };
 #endif

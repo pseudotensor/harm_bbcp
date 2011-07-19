@@ -14,51 +14,44 @@
 #include "bbcp_Platform.h"
 #include "bbcp_Headers.h"
 #include "bbcp_Debug.h"
+#include "bbcp_Emsg.h"
 
 /******************************************************************************/
 
 int bbcp_Emsg(const char *sfx, int ecode, const char *txt1, 
-                                    char *txt2, char *txt3)
+                                   const char *txt2, const char *txt3)
 {
     int xcode;
     char ebuff[16], *etxt;
 
     xcode = (ecode < 0 ? -ecode : ecode);
     etxt = (char *)strerror(xcode);
-    if (!strncmp((const char *)etxt, "Unknown", 7))
+    if (!strncmp(etxt, "Unknown", 7))
        {snprintf(ebuff, sizeof(ebuff), "Error %d", ecode);
         etxt = ebuff;
        }
 
-    if (sfx && bbcp_Debug.Trace) 
-             cerr <<"bbcp_" <<bbcp_Debug.Who <<'.' <<sfx <<": " <<etxt;
-       else  cerr <<"bbcp: " <<etxt;
-    if (*txt1 == ';') cerr << txt1;
-       else cerr <<' ' <<txt1;
-    if (txt2) cerr <<' ' <<txt2;
-    if (txt3) cerr <<' ' <<txt3 <<endl;
-       else   cerr << endl;
+    bbcp_Fmsg(sfx, etxt, txt1, txt2, txt3);
+
     return (ecode ? ecode : -1);
 }
 
 /******************************************************************************/
 
-int bbcp_Fmsg(const char *sfx, const char *txt1, char *txt2, char *txt3,
-                                     char *txt4, char *txt5, char *txt6)
+int bbcp_Fmsg(const char *sfx, const char *txt1, const char *txt2,
+                               const char *txt3, const char *txt4,
+                               const char *txt5, const char *txt6)
 {
-    if (sfx && bbcp_Debug.Trace) 
-             cerr <<"bbcp_" <<bbcp_Debug.Who <<'.' <<sfx <<": " <<txt1;
-       else  cerr <<"bbcp: " <<txt1;
-    if (txt2) {cerr <<' ' <<txt2;
-               if (txt3) {cerr <<' ' <<txt3;
-                          if (txt4) {cerr <<' ' <<txt4;
-                                     if (txt5) {cerr <<' ' <<txt5;
-                                                if (txt6) {cerr <<' ' <<txt6;}
-                                               }
-                                    }
-                         }
-              }
-    cerr <<endl;
+   const char *bV[] = {txt2, txt3, txt4, txt5, txt6};
+   char *bP, buff[2048];
+   int i;
 
-    return -1;
+   bP = buff + (sfx && bbcp_Debug.Trace
+      ? sprintf(buff, "bbcp_%s.%s: %s", bbcp_Debug.Who, sfx, txt1)
+      : sprintf(buff, "bbcp: %s", txt1));
+
+   for (i = 0; i < 5 && bV[i]; i++) bP += sprintf(bP, " %s", bV[i]);
+   strcpy(bP, "\n");
+   cerr <<buff;
+   return -1;
 }

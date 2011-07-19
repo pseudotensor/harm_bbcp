@@ -39,7 +39,7 @@ pid_t      getGrandP();
 
 // Get total cpu time spent in seconds
 //
-int       Usage(int  &cpu, int  &pfs, int  &swp);
+int       Usage(int  &sys, int  &usr);
 
 // Get my username
 //

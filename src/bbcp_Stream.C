@@ -21,7 +21,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#if defined(SUN)
+// Ranch version changed below 2 lines
+//#if defined(SUN)
+#if !defined(FREEBSD) && !defined(MACOS) && !defined(AIX)
 #include <stropts.h>
 #include <sys/stropts.h>
 #endif
@@ -471,7 +473,7 @@ void bbcp_Stream::RetToken()
 /*                                   P u t                                    */
 /******************************************************************************/
 
-int bbcp_Stream::Put(const char *data, const int dlen) {
+int bbcp_Stream::Put(const char *data, int dlen) {
     int dcnt = dlen, retc;
 
     if (flags & bbcp_Stream_BUSY) {ecode = ETXTBSY; return -1;}

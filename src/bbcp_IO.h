@@ -50,9 +50,8 @@ virtual ssize_t      Write(char *buff, size_t wrsz, off_t offs);
 
 virtual ssize_t      Write(const struct iovec *iovp, int iovn);
 
-             bbcp_IO(int fd=-1) {iofd = fd; xfrbytes = xfrseek = 0;
-                                 RKeyA = RKeyZ = WKeyA = WKeyZ = 0;
-                                }
+             bbcp_IO(int fd=-1) : RKeyA(0), RKeyZ(0), WKeyA(0), WKeyZ(0),
+                                  xfrbytes(0), xfrseek(0), iofd(fd) {}
 virtual     ~bbcp_IO()          {Close();
                                  if (RKeyA) free(RKeyA);
                                  if (RKeyZ) free(RKeyZ);
@@ -61,10 +60,10 @@ virtual     ~bbcp_IO()          {Close();
                                 }
 protected:
 
+char      *RKeyA, *RKeyZ, *WKeyA, *WKeyZ;
 bbcp_Timer xfrtime;
-int        iofd;
 long long  xfrbytes;
 long long  xfrseek;
-char      *RKeyA, *RKeyZ, *WKeyA, *WKeyZ;
+int        iofd;
 };
 #endif

@@ -8,6 +8,10 @@
 /*              DE-AC03-76-SFO0515 with the Department of Energy              */
 /******************************************************************************/
   
+#ifdef LINUX
+#define _XOPEN_SOURCE 600
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -52,6 +56,10 @@ int bbcp_FS_Unix::Applicable(const char *path)
 //
    if (statvfs(path, &buf)) return 0;
 
+// Set the sector size
+//
+   secSize = buf.f_frsize;
+
 // Save the path to this filesystem if we don't have one. This is a real
 // kludgy short-cut since in bbcp we only have a single output destination.
 //
@@ -75,7 +83,7 @@ int bbcp_FS_Unix::Enough(long long bytes, int numfiles)
 
 // Perform a stat call on the filesystem
 //
-   if (statvfs((const char *)fs_path, &buf)) return 0;
+   if (statvfs(fs_path, &buf)) return 0;
 
 // Calculate free space
 //
@@ -90,6 +98,21 @@ int bbcp_FS_Unix::Enough(long long bytes, int numfiles)
 #else
    return 1;
 #endif
+}
+
+/******************************************************************************/
+/*                               g e t S i z e                                */
+/******************************************************************************/
+  
+long long bbcp_FS_Unix::getSize(int fd, long long *bsz)
+{
+   struct stat Stat;
+
+// Get the size of the file
+//
+   if (fstat(fd, &Stat)) return -errno;
+   if (bsz) *bsz = (secSize > 8192 ? 8192 : secSize);
+   return Stat.st_size;
 }
 
 /******************************************************************************/
@@ -114,22 +137,34 @@ bbcp_File *bbcp_FS_Unix::Open(const char *fn, int opts, int mode)
     int FD;
     bbcp_IO *iob;
 
+// Check for direct I/O
+//
+#ifdef O_DIRECT
+   if (dIO) opts |= O_DIRECT;
+#endif
+
 // Open the file
 //
    if ((FD = (mode ? open(fn, opts, mode) : open(fn, opts))) < 0) 
       return (bbcp_File *)0;
 
-// Force direct I/O, if possible
+// Advise about file access in Linux
+//
+#ifdef LINUX
+   posix_fadvise(FD, 0, 0, POSIX_FADV_SEQUENTIAL | POSIX_FADV_NOREUSE);
+#endif
+
+// Do direct I/O for Solaris
 //
 #ifdef SUN
-   if (directio(FD, DIRECTIO_ON))
-      DEBUG(strerror(errno) <<" requesting direct i/o for " <<fn);
+   if (dIO && directio(FD, DIRECTIO_ON))
+      {DEBUG(strerror(errno) <<" requesting direct i/o for " <<fn); dIO = 0;}
 #endif
 
 // Allocate a file object and return that
 //
    iob =  new bbcp_IO(FD);
-   return new bbcp_File(fn, iob, (bbcp_FileSystem *)this);
+   return new bbcp_File(fn, iob, (bbcp_FileSystem *)this, (dIO ? secSize : 0));
 }
   
 /******************************************************************************/

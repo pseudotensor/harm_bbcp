@@ -16,37 +16,28 @@
 #include "bbcp_Stream.h"
 #include "bbcp_Pthread.h"
 
-#define  BBCP_LOGFILE_MAX 4
+class bbcp_LogFiler;
 
 class bbcp_LogFile
 {
+friend class bbcp_LogFiler;
+
 public:
 
-int     Open(const char *fname);
+       int  Open(const char *fname);
 
-void    Monitor(int fdnum, char *fdname);
+       void Monitor(int fdnum, char *fdname);
 
-void    Record();
+static void Record(bbcp_LogFiler *lfP);
 
-        bbcp_LogFile();
-       ~bbcp_LogFile();
+            bbcp_LogFile() : Logfd(-1), Logfn(0), Loggers(0) {}
+           ~bbcp_LogFile();
 
 private:
 
-bbcp_Timer   Mytime;
-bbcp_Mutex   Flog;
-bbcp_Stream *fdstr[BBCP_LOGFILE_MAX];
-int          fdmon[BBCP_LOGFILE_MAX];
-char        *fdid[BBCP_LOGFILE_MAX];
-int          fdcnt;
-int          Logfd;
-char        *Logfn;
-pthread_t    Logtid;
-int          Sigfd;
-int          notdone;
-
-int  fmtTime(char *tbuff);
-void Remove(int fd, int emsg);
-void Process(int fd);
+bbcp_Mutex     Flog;
+int            Logfd;
+char          *Logfn;
+bbcp_LogFiler *Loggers;
 };
 #endif

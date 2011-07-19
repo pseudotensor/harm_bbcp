@@ -39,6 +39,12 @@ public:
 //
 virtual int        Applicable(const char *path)=0;
 
+// Indicates that direct I/O, if available, should be used. This needs to
+// be called prior to open(). Argument 0 turns it off, 1 turns it on.
+//
+virtual int        DirectIO(int On) {int oIo = dIO; dIO = On; return oIo;}
+virtual int        DirectIO()       {return dIO;}
+
 // Returns true (1) if the filesystem has enough space for the number of
 // bytes amd the number of files, false (0) otherwise.
 //
@@ -46,9 +52,12 @@ virtual int        Enough(long long bytes, int numfiles=1)=0;
 
         long long  FSID() {return fs_id;}
 
+// Obtain the size of a file and return desired block size
+//
+virtual long long  getSize(int fd, long long *blksz=0) = 0;
+
 // Opens a file and returns the associated file object. Upon an error, returns
-// null with errno set to the error code (see Unix open()). OpenT is the same
-// as Open but indoicates that the file is temporary in nature.
+// null with errno set to the error code (see Unix open()).
 //
 virtual bbcp_File *Open( const char *fn, int opts, int mode=0)=0;
 
@@ -83,13 +92,15 @@ virtual int        setTimes(const char *path, time_t atime, time_t mtime)=0;
 virtual int        Stat(const char *path, bbcp_FileInfo *finfo=0)=0;
 
 
-              bbcp_FileSystem() {fs_path = 0; fs_id = 0;}
+              bbcp_FileSystem() : fs_path(0), fs_id(0), secSize(0), dIO(0) {}
 virtual      ~bbcp_FileSystem() {if (fs_path) free(fs_path);}
 
 protected:
 
-char     *fs_path;    // Valid path to filesystem
-long long fs_id;      // Unique filesystem identifier
+char        *fs_path;    // Valid path to filesystem
+long long    fs_id;      // Unique filesystem identifier
+size_t       secSize;
+int          dIO;        // Direct I/O requested
 };
 
 // getFileSystem() returns a FileSystem object that is applicable to the

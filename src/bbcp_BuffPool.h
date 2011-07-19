@@ -14,58 +14,27 @@
 #include <strings.h>
 #include "bbcp_Pthread.h"
 
-struct bbcp_Header
-       {char cmnd;          // Command
-        char args;          // Command arguments
-        char snum[2];       // Stream number
-        char blen[4];       // int       buffer length
-        char boff[8];       // Long long buffer offset
-        char cksm[16];      // MD5 check sum (optional) also args
-       bbcp_Header() {bzero(cksm, sizeof(cksm));}
-      ~bbcp_Header() {}
-       };
-
-// Valid commands
-//
-#define BBCP_IO       0x00
-#define BBCP_CLOSE    0x04
-#define BBCP_SETWS    0x05
-#define BBCP_ABORT    0xFF
-
-// Arguments
-//
-#define BBCP_MD5CHK   0x01
-
-struct bbcp_Buffer
-       {struct bbcp_Buffer *next;
-        int                 blen;
-        long long           boff;
-        bbcp_Header         bHdr;
-        char               *data;
-        short               snum;
-
-        bbcp_Buffer() {next=0; blen=0; boff=0; data=0; snum=0;}
-       ~bbcp_Buffer() {if (data) free(data);}
-       };
+class bbcp_Buffer;
+  
+/******************************************************************************/
+/*                   C l a s s   b b c p _ B u f f P o o l                    */
+/******************************************************************************/
   
 class bbcp_BuffPool
 {
 public:
 void         Abort();
 
-int          Allocate(int buffnum, int bsize);
+int          Allocate(int buffnum, int bsize, int sink, int ovhd=0);
+int          Allocate(int buffnum);
 
 int          BuffCount() {return numbuf;}
 
-int          BuffSize()  {return buffsz;}
-
 int          DataSize() {return datasz;}
 
-void         Encode(bbcp_Buffer *bp, char xcmnd, char xargs);
+int          Decode(bbcp_Buffer *bp);
 
-void         Decode(bbcp_Buffer *bp);
-
-int          goodWSZ(int  wsz, int  maxsz);
+void         Encode(bbcp_Buffer *bp, char xcmnd);
 
 bbcp_Buffer *getEmptyBuff();
 
@@ -86,13 +55,79 @@ bbcp_Semaphore EmptyBuffs;
 bbcp_Semaphore FullBuffs;
 
 int         numbuf;
-int         buffsz;
 int         datasz;
+int         buffsz;
 int         RU486;
 const char *pname;
 
 bbcp_Buffer *next_full;
 bbcp_Buffer *last_full;
 bbcp_Buffer *last_empty;
+};
+
+/******************************************************************************/
+/*                     C l a s s   b b c p _ H e a d c s                      */
+/******************************************************************************/
+
+struct bbcp_Headcs
+      {union {long long lVal[2];
+              int       iVal[2];
+              short     sVal[2];
+              char      cVal[2];
+             };
+      };
+
+/******************************************************************************/
+/*                     C l a s s   b b c p _ H e a d e r                      */
+/******************************************************************************/
+
+  
+struct bbcp_Header
+      {char cmnd;          // Command
+       char hdcs;          // Header checksum
+       char flgs;          // Flags
+       char rsv1;          // Reserved
+       char blen[4];       // int       buffer length
+       char boff[8];       // Long long buffer offset
+       char cksm[16];      // MD5 check sum (optional)
+       bbcp_Header() {bzero(cksm, sizeof(cksm));}
+      ~bbcp_Header() {}
+       };
+
+// Valid commands
+//
+#define BBCP_IO       0x00
+#define BBCP_CLCKS    0x03
+#define BBCP_CLOSE    0x04
+#define BBCP_ABORT    0xFF
+
+// Valid flags in flgs
+//
+#define BBCP_HDCS     0x80
+
+/******************************************************************************/
+/*                     C l a s s   b b c p _ B u f f e r                      */
+/******************************************************************************/
+  
+class bbcp_Buffer
+{
+public:
+bbcp_Buffer  *next;
+long long     boff;
+int           blen;
+int           rsvd;
+bbcp_Header   bHdr;
+char         *data;
+
+inline void   Recycle() {Owner->putEmptyBuff(this);}
+
+              bbcp_Buffer(bbcp_BuffPool *oP, char *bP=0)
+                         : next(0), boff(0),   blen(0), rsvd(0),
+                           data(0), Owner(oP), Buff(bP) {}
+             ~bbcp_Buffer() {if (Buff) free(Buff);}
+
+private:
+bbcp_BuffPool *Owner;
+char          *Buff;
 };
 #endif

@@ -2,104 +2,17 @@
 /*                                                                            */
 /*                                b b c p . C                                 */
 /*                                                                            */
-/* (c) 2002 by the Board of Trustees of the Leland Stanford, Jr., University  */
+/* (c) 2010 by the Board of Trustees of the Leland Stanford, Jr., University  */
 /*      All Rights Reserved. See bbcp_Version.C for complete License Terms    */
 /*   Produced by Andrew Hanushevsky for Stanford University under contract    */
 /*              DE-AC03-76-SFO0515 with the Department of Energy              */
 /******************************************************************************/
   
-/* bbcp provides a secure fast parallel copy utility. The syntax is:
+/* bbcp provides a secure fast parallel copy utility. See bbcp_Config.C for
+   the actual list of options. The general syntax is:
 
    bbcp [options] inspec outspec
-
-   options: [-a [dir]] [-b num] [-c [lvl]] [-C <fname>] [-d <path>] [-D] [-e]
-            [-f] [-i <fname>] [-I <fname>] [-k] [-l fn]
-            [-L <spec>[@<host>[:<port>]]
-            [-m mode] [-p] [-P sec] [-s strms] [-S <srccmd>] [-T <trgcmd>]
-            [-v] [-V] [-w wsz] [-W wsz] [-x rate] [-z]
-
-   inspec & oouspec: [username@][hostname:]path
-
-Where:
-   -a     Appends data  That is, data that has not been copied from a previous
-          copy operation is appended to the file. This is useful when
-          restarting a failed copy. An optional checkpoint directory may be
-          specified with this option. The -a option is not allowed when data
-          comes from standard in or goes to standard out.
-
-   -b     sets the read block factor (i.e., number of network buffers filled
-          at once from source before being sent). The default is 1.
-
-   -d     Indicates that source files are relative to the specified path and
-          that relative source paths must be created at the target relative
-          to the target path.
-
-   -D     Turns on debugging to standard error.
-
-   -c     Compress the data before sending it. A compression level, 1 to 9,
-          may be specified (default is 5).
-
-   -C     Specifies the configuration file. The file is processed at the time
-          it is encountered on the command line. The default is to look for the
-          filename in env variable bbcp_CONFIGFN and then for <home>/.bbcp.cf.
-
-   -e     Error checking. Use MD5 checksums to make sure file data was correctly
-          sent. This introduces significant overhead.
-
-   -f     Forces the copy. If the destination file is unlinked prior to the
-          copy operation. This overides the -a options.
-
-   -i     specifies the ssh identity file to be used for source and target.
-
-   -I     Specifies the the file that holds the list of source files to be
-          copied. Each file specification is delimited by a newline. Files
-          are copied in the order specified, in addition to any specified
-          on the command line.
-
-   -k     Keep the file. Normally, errors cause the destination file to be
-          erased. This allows the file to be kept.
-
-   -l     Writes standard error out to the indicated file.
-
-   -L     Sets the logging options. For <spec>, specify a list of one or
-          more of the following characters: i (log net input), o (log net
-          output), r (log file reads), w (log file writes). For <host>
-          specify the place where the log daemon runs, and for <port> the
-          port on which is listens.
-
-   -m     The destination mode for the file. The default is 644 (see -p).
-
-   -p     Preserve the source mode, owner, group, and timestamps.
-
-   -P     Produce a progress message every sec seconds (minimum is 30).
-
-   -s     The number of parallel network streams. Thee default is 4.
-
-   -S     Is the command to be used to start the source node copy. Typically,
-          this is the ssh command followed by the bbcp command. Use %H to
-          mark ssh host substitution, %U to mark ssh user substitution, and
-          %I to mark identify file substitution (which include -i as the
-          option name preceeding the filename).
-
-   -T     Is the command to be used to start the target node copy. All -S
-          consideration apply to -T.
-
-   -v     Verbose mode.
-
-   -V     Very verbose mode.
-
-   -w     Window size. The prefered window size. The default is 8k. Specify
-          any value < 2G (the value may be suffixed k, m, or g).
-
-   -W     Window size. Same as -w but forces the window to be sized exactly
-          to the specified value which will result in a smaller data buffer.
-
-   -x     Is teh maximum transfer rate allowed in bytes, K, M, or G.
-
-   -z     Reverse connect protocol to be used (i.e., source connects to sink
-          as opposed to sink connects to source).
 */
-
 /******************************************************************************/
 /*                         i n c l u d e   f i l e s                          */
 /******************************************************************************/
@@ -153,7 +66,9 @@ main(int argc, char *argv[], char *envp[])
    int retc;
    int        TotFiles = 0;
    long long  TotBytes = 0;
+   double     xRate;
    bbcp_Timer Elapsed_Timer;
+   const char *xType;
 
 // Process configuration file
 //
@@ -193,7 +108,7 @@ main(int argc, char *argv[], char *envp[])
 //
    if (bbcp_Config.Logfn)
       {bbcp_Config.MLog = new bbcp_LogFile();
-       if (bbcp_Config.MLog->Open((const char *)bbcp_Config.Logfn)) exit(5);
+       if (bbcp_Config.MLog->Open(bbcp_Config.Logfn)) exit(5);
       }
 
 // Grab all source files for each particular user/host and copy them
@@ -233,15 +148,17 @@ main(int argc, char *argv[], char *envp[])
 // Report final statistics if wanted
 //
    DEBUG("Ending; rc=" <<retc <<" files=" <<TotFiles <<" bytes=" <<TotBytes);
-   if (bbcp_Config.Options & (bbcp_BLAB | bbcp_VERBOSE) 
+   if (bbcp_Config.Options & bbcp_VERBOSE
    && !retc && TotFiles && TotBytes)
       {double ttime;
-       char buff[64];
+       char buff[128];
        Elapsed_Timer.Stop();
        Elapsed_Timer.Report(ttime);
-       sprintf(buff, "%.1f", (((double)TotBytes)/ttime)/1024.0);
+       xRate = ((double)TotBytes)/ttime; xType = bbcp_Config::Scale(xRate);
+       sprintf(buff, "%.1f %sB/s", xRate, xType);
        cerr <<TotFiles <<(TotFiles != 1 ? " files" : " file");
-       cerr <<" copied at effectively " <<buff <<" KB/s" <<endl;
+       cerr <<" copied at effectively " <<buff <<endl;
       }
+   if (bbcp_Config.MLog) delete bbcp_Config.MLog;
    exit(retc);
 }

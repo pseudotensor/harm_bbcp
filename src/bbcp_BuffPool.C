@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <sys/mman.h>
 
 #if defined(MACOS) || defined(AIX)
 #define memalign(pgsz,amt) valloc(amt)
@@ -82,53 +83,101 @@ bbcp_BuffPool::~bbcp_BuffPool()
 
 void bbcp_BuffPool::Abort()
 {
+   int Kicking;
 
 // Set the abort flag and then post the empty buffer pool. This will cause
 // anyone looking for an empty buffer to abort. They in turn will cascade
 // that information on to the next person.
 //
    EmptyPool.Lock();
-   RU486 = 1;
+   Kicking = !RU486; RU486 = 1;
    EmptyBuffs.Post();
    EmptyPool.UnLock();
 
 // Do the same for the full buffer queue
 //
-   FullPool.Lock();
    FullBuffs.Post();
-   FullPool.UnLock();
-   DEBUG("Aborting the " <<pname <<" buffer pool.");
+   if (Kicking) {DEBUG("Aborting the " <<pname <<" buffer pool.");}
 }
   
 /******************************************************************************/
 /*                              A l l o c a t e                               */
 /******************************************************************************/
-  
-int bbcp_BuffPool::Allocate(int buffnum, int  bsize)
-{
-   bbcp_Buffer *new_empty;
-   int bnum = buffnum, allocsz;
-   char *buffaddr;
-   typedef unsigned long long ull_t;
 
-// Check if this is an extend call or an initialization call
+#ifndef MAP_ALIGN
+#define MAP_ALIGN 0
+#endif
+  
+int bbcp_BuffPool::Allocate(int buffnum, int  bsize, int Sink, int ovhd)
+{
+   static const int mapOpts = MAP_SHARED|MAP_ANON|MAP_ALIGN;
+   static const int mapProt = PROT_WRITE|PROT_READ;
+   static int PageSize = sysconf(_SC_PAGESIZE);
+   bbcp_Buffer *new_empty;
+   int bnum = buffnum, dOvhd = (Sink ? PageSize : 0);
+   size_t totlsz;
+   char *buffaddr;
+
+// This is an initialization call, setup to allocate correctly. Note that old
+// versions of bbcp incorrectly substracted out the size of the header from
+// the 'bsize'. So, we need to do the same and continue the error.
 //
    EmptyPool.Lock();
-   if (!numbuf)
-      {buffsz = bsize;
-       datasz = bsize  - sizeof(bbcp_Header);
+   datasz = (bsize - sizeof(bbcp_Header))/PageSize*PageSize + dOvhd;
+   buffsz = (bsize + ovhd + (PageSize-1))/PageSize*PageSize + dOvhd;
+   totlsz = static_cast<size_t>(buffsz) * buffnum;
+
+// Allocate shared memory
+//
+   buffaddr = (char *)mmap(0, totlsz, mapProt, mapOpts, -1,  0);
+   if (buffaddr == MAP_FAILED)
+      {DEBUG(strerror(errno) <<" doing mmap for " <<totlsz <<' ' <<pname <<" bytes.");
+       return Allocate(buffnum);
       }
-   allocsz    = buffsz + sizeof(bbcp_Header); // This is simply sloppy here
+
+// Carve up the memory
+//
+   while(bnum--)
+        {if (!(new_empty = new bbcp_Buffer(this)))
+            {bbcp_Emsg("BuffPool", ENOMEM, "allocating buffers."); break;}
+          new_empty->data = (char *)buffaddr;
+         *new_empty->data = 0xff;
+          new_empty->next = last_empty;
+          last_empty = new_empty;
+          buffaddr += buffsz;
+          EmptyBuffs.Post();
+         }
+   numbuf += buffnum-(bnum+1);
+   EmptyPool.UnLock();
+
+// All done
+//
+   DEBUG("Allocated " <<buffnum-(bnum+1) <<' ' <<buffsz <<" (" <<datasz <<
+         ") byte buffs in the " <<pname <<" pool.");
+   return bnum+1;
+}
+  
+/******************************************************************************/
+  
+int bbcp_BuffPool::Allocate(int buffnum)
+{
+   static int PageSize = sysconf(_SC_PAGESIZE);
+   bbcp_Buffer *new_empty;
+   int bnum = buffnum;
+   char *baddr;
+
+// This is an initialization call, setup to allocate correctly
+//
+   EmptyPool.Lock();
 
 // Allocate the appropriate number of buffers aligned on page boundaries
 //
    while (bnum--)
-         {if (!(new_empty = new bbcp_Buffer())
-          ||  !(new_empty->data = (char *)memalign(sysconf(_SC_PAGESIZE),allocsz)))
-             {bbcp_Emsg("BuffPool", ENOMEM, "allocating buffers.");
-              if (new_empty) delete new_empty;
-              break;
-             }
+         {if (!(baddr = (char *)memalign(PageSize,buffsz))
+          ||  !(new_empty = new bbcp_Buffer(this, baddr)))
+             {bbcp_Emsg("BuffPool", ENOMEM, "allocating buffers."); break;}
+          new_empty->data = baddr;
+         *new_empty->data = 0xff;
           new_empty->next = last_empty;
           last_empty = new_empty;
           EmptyBuffs.Post();
@@ -138,22 +187,9 @@ int bbcp_BuffPool::Allocate(int buffnum, int  bsize)
 
 // All done.
 //
-   DEBUG("Allocated " <<buffnum-(bnum+1) <<' ' <<buffsz <<" byte buffs in the " <<pname <<" pool.");
+   DEBUG("Allocated " <<buffnum-(bnum+1) <<' ' <<buffsz <<" (" <<datasz <<
+         ") byte buffs in the " <<pname <<" pool.");
    return bnum+1;
-}
-
-/******************************************************************************/
-/*                               g o o d W S Z                                */
-/******************************************************************************/
-
-int  bbcp_BuffPool::goodWSZ(int  wsz, int  maxsz)
-{
-
-// For now just return a window size that will correspond to the requested
-// quantity plus the overhead. Eventually we will compute the optimum size.
-//
-   wsz += sizeof(bbcp_Header);
-   return (wsz > maxsz ? maxsz : wsz);
 }
   
 /******************************************************************************/
@@ -295,14 +331,27 @@ void bbcp_BuffPool::putFullBuff(bbcp_Buffer *buffp)
 /*                                D e c o d e                                 */
 /******************************************************************************/
   
-void bbcp_BuffPool::Decode(bbcp_Buffer *bp)
+int  bbcp_BuffPool::Decode(bbcp_Buffer *bp)
 {
      USBUFF;
      bbcp_Header *hp = &bp->bHdr;
+     bbcp_Headcs *cP = (bbcp_Headcs *)hp, csData;
+     char hdcs = 0;
+     int n;
 
-// Extract out the stream number
+// If a checksum was calculate (backward compatability) verify it (it should
+// result in a zero after xoring all the bytes in the header including chksum).
 //
-   UnsS(bp->snum, hp->snum);
+   if (hp->flgs & BBCP_HDCS)
+      {n = (hp->cmnd == (char)BBCP_CLCKS ? 1 : 0);
+       do {csData.lVal[0]  = cP->lVal[0] ^ cP->lVal[1];
+           csData.iVal[0] ^= csData.iVal[1];
+           csData.sVal[0] ^= csData.sVal[1];
+           hdcs ^= (csData.cVal[0] ^ csData.cVal[1]);
+           cP = (bbcp_Headcs *)hp->cksm;
+          } while(n--);
+       if (hdcs) return 0;
+      }
 
 // Extract out the length
 //
@@ -311,25 +360,24 @@ void bbcp_BuffPool::Decode(bbcp_Buffer *bp)
 // Extract out the offset
 //
    UnsLL(bp->boff, hp->boff);
+   return 1;
 }
  
 /******************************************************************************/
 /*                                E n c o d e                                 */
 /******************************************************************************/
   
-void bbcp_BuffPool::Encode(bbcp_Buffer *bp, char xcmnd, char xargs)
+void bbcp_BuffPool::Encode(bbcp_Buffer *bp, char xcmnd)
 {
      USBUFF;
      bbcp_Header *hp = &bp->bHdr;
+     bbcp_Headcs *cP = (bbcp_Headcs *)hp, csData;
+     char hdcs = 0;
+     int n = (xcmnd == (char)BBCP_CLCKS ? 1 : 0);
 
-// Set the command and argument
+// Set the command
 //
-   hp->cmnd    = xcmnd;
-   hp->args    = xargs;
-
-// Set the stream number
-//
-   SerS(bp->snum, hp->snum);
+   hp->cmnd = xcmnd;
 
 // Set the length
 //
@@ -338,4 +386,20 @@ void bbcp_BuffPool::Encode(bbcp_Buffer *bp, char xcmnd, char xargs)
 // Set the offset
 //
    SerLL(bp->boff, hp->boff);
+
+// Calculate an xor checksum of the header (order independent). We iterate
+// twice if we need to include the data checksum in the header checksum.
+//
+   hp->hdcs = 0;
+   hp->flgs |= BBCP_HDCS;
+   do {csData.lVal[0]  = cP->lVal[0] ^ cP->lVal[1];
+       csData.iVal[0] ^= csData.iVal[1];
+       csData.sVal[0] ^= csData.sVal[1];
+       hdcs ^= (csData.cVal[0] ^ csData.cVal[1]);
+       cP = (bbcp_Headcs *)hp->cksm;
+      } while(n--);
+
+// Set the header checksum in the header
+//
+   hp->hdcs  = hdcs;
 }

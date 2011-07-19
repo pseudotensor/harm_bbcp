@@ -22,10 +22,6 @@ long long    Bytes() {return cbytes;}
 
 int          Process(void);
 
-// setSN() sets the stream number to allow for multiplexed file I/O.
-//
-void         setSN(int sn) {snum = sn;}
-
 pthread_t    TID;
 
       bbcp_ZCX(bbcp_BuffPool *ib, bbcp_BuffPool *rb, bbcp_BuffPool *ob,
@@ -42,7 +38,6 @@ bbcp_BuffPool   *Obuff;
 long long        cbytes;
 int              Clvl;
 int              iofd;
-short            snum;
 char            *LogIDbeg;
 char            *LogIDend;
 };

@@ -165,24 +165,22 @@ pid_t bbcp_System::getGrandP()
 /*                                 U s a g e                                  */
 /******************************************************************************/
 
-int  bbcp_System::Usage(int  &cpu, int   &pfs,  int   &swp)
+int  bbcp_System::Usage(int   &Scpu,  int   &Ucpu)
 {     struct rusage Pfo, Cfo;
 
       if (getrusage(RUSAGE_CHILDREN,&Cfo)<0 || getrusage(RUSAGE_SELF,&Pfo)<0)
-         {cpu = pfs = swp = 0; Cfo.ru_maxrss = Pfo.ru_maxrss = 0;}
-         else {cpu  = Pfo.ru_utime.tv_sec *1000 +
+         Scpu = Ucpu = 0;
+         else {Ucpu = Pfo.ru_utime.tv_sec *1000 +
                       Pfo.ru_utime.tv_usec/1000 +
-                      Pfo.ru_stime.tv_sec *1000 +
-                      Pfo.ru_stime.tv_usec/1000 +
                       Cfo.ru_utime.tv_sec *1000 +
-                      Cfo.ru_utime.tv_usec/1000 +
+                      Cfo.ru_utime.tv_usec/1000;
+               Scpu = Pfo.ru_stime.tv_sec *1000 +
+                      Pfo.ru_stime.tv_usec/1000 +
                       Cfo.ru_stime.tv_sec *1000 +
                       Cfo.ru_stime.tv_usec/1000;
-               pfs  = Cfo.ru_majflt + Pfo.ru_majflt;
-               swp  = Cfo.ru_nswap  + Pfo.ru_nswap;
               }
 
-       return Cfo.ru_maxrss * (PageSize/1024);
+       return Scpu + Ucpu;
 }
   
 /******************************************************************************/

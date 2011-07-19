@@ -38,13 +38,12 @@ extern bbcp_Network  bbcp_Net;
 /*                           C o n s t r u c t o r                            */
 /******************************************************************************/
 
-bbcp_Link::bbcp_Link(int fd, const char *lname, int getmd5obj) 
-          : IOB(fd), Rendezvous(0)
+bbcp_Link::bbcp_Link(int fd, const char *lname)
+          : LinkNum(0), Buddy(0),  Rendezvous(0), IOB(fd), Lname(strdup(lname))
 {
-   Lname   = strdup(lname);
-   LinkNum = 0;
-   md5obj = (getmd5obj ? new bbcp_MD5() : (bbcp_MD5 *)0);
-   Buddy = 0;
+   csObj = (bbcp_Config.csOpts & bbcp_csLink
+         ? bbcp_ChkSum::Alloc(bbcp_Config.csType?bbcp_Config.csType:bbcp_csMD5)
+         : 0);
 }
   
 /******************************************************************************/
@@ -56,7 +55,7 @@ int bbcp_Link::Buff2Net()
     bbcp_Buffer *outbuff;
     ssize_t wrsz, wlen = 0;
     const ssize_t hdrsz = (ssize_t)sizeof(bbcp_Header);
-    int retc = 0, NotDone = 1;
+    int retc = 0, NotDone = 1, csLen = (csObj ? csObj->csSize() : 0);
     struct iovec iov[2] = {0, hdrsz, 0, 0};
 
 // Check if this is a clocking link
@@ -78,14 +77,14 @@ int bbcp_Link::Buff2Net()
 
       // Compose the header and see if control operation required
       //
-         if (!(outbuff->blen))
+         if (outbuff->blen <= 0)
             {if ((NotDone = Control_Out(outbuff)) < 0) {retc = 255; break;}}
-            else bbcp_BPool.Encode(outbuff, BBCP_IO, 0);
+            else bbcp_BPool.Encode(outbuff, BBCP_IO);
 
       // Check if we should generate a checksum
       //
-         if (md5obj && outbuff->blen)
-            md5obj->Set_MD5(outbuff->data,outbuff->blen,(outbuff->bHdr.cksm));
+         if (csObj && outbuff->blen) memcpy(outbuff->bHdr.cksm,
+            csObj->Calc(outbuff->data,outbuff->blen), csLen);
 
       // Write all of the data (header & data are sequential)
       //
@@ -114,7 +113,7 @@ int bbcp_Link::Buff2Net()
           else if (wlen > 0) {bbcp_Fmsg("Link","Data lost on link", Lname);
                               retc = 100;
                              }
-      }
+      } else if (NotDone) bbcp_BPool.Abort();
 
 // All done
 //
@@ -132,15 +131,16 @@ int bbcp_Link::Net2Buff()
                                  "Invalid header length",   // 1
                                  "Invalid buffer length",   // 2
                                  "Invalid data length",     // 3
-                                 "Invalid checksum"         // 4
+                                 "Invalid checksum",        // 4
+                                 "Invalid hdr checksum"     // 5
                                 };
-    enum err_type {NONE = 0, IHL = 1, IBL = 2, IDL = 3, ICS = 4};
+    enum err_type {NONE = 0, IHL = 1, IBL = 2, IDL = 3, ICS = 4, IHS = 5};
     err_type ecode = NONE;
     bbcp_Buffer *inbuff;
     ssize_t rdsz, rlen = 0;
     ssize_t hdrsz = (ssize_t)sizeof(bbcp_Header);
     int  maxrdsz  = bbcp_BPool.DataSize();
-    int i, notdone = 1;
+    int i, notdone = 1, csLen = (csObj ? csObj->csSize() : 0);
 
 // Check if this is a clocking link
 //
@@ -159,24 +159,26 @@ int bbcp_Link::Net2Buff()
          if (!(inbuff = bbcp_BPool.getEmptyBuff()))
             {rlen = 132; notdone = 0; break;}
 
-      // Read the header information into the header buffer and decode it
+      // Read the header information into the header buffer
       //
          if ((rlen = IOB.Read((char *)&inbuff->bHdr, hdrsz)) != hdrsz)
             {if (rlen > 0) {ecode = IHL; rlen = EINVAL;} break;}
-         bbcp_BPool.Decode(inbuff);
+
+      // Decode the header and make sure it decoded correctly
+      //
+         if (!bbcp_BPool.Decode(inbuff)) {ecode = IHS; break;}
 
       // Make sure the read length does not overflow our buffer
       //
          if ((rdsz = inbuff->blen) > maxrdsz) {ecode = IBL; break;}
 
-      // Read data into the buffer and do md5 checksum if needed
+      // Read data into the buffer and do checksum if needed
       //
          if (rdsz)
             {if ((rlen = IOB.Read(inbuff->data, rdsz)) != rdsz)
                 {if (rlen > 0) ecode = IDL; break;}
-             if (md5obj && 
-                 md5obj->Chk_MD5(inbuff->data, rlen, inbuff->bHdr.cksm))
-                {ecode = ICS; break;}
+             if (csObj && memcmp(csObj->Calc(inbuff->data,inbuff->blen),
+                                 inbuff->bHdr.cksm,csLen)) {ecode = ICS; break;}
             }
 
       // Check if this is a control operation or data operation
@@ -201,7 +203,7 @@ int bbcp_Link::Net2Buff()
    if (notdone)
       {bbcp_BPool.Abort();
       if (ecode != NONE)
-         {bbcp_Fmsg("Net2Buff", Etxt[(int)ecode], (char *)"from", Lname);
+         {bbcp_Fmsg("Net2Buff", Etxt[(int)ecode], "from", Lname);
           return 128;
          }
       if (rlen >=0) return EPIPE;
@@ -248,10 +250,10 @@ int bbcp_Link::ClockData()
          Ticker.Stop();
          Ticker.Report(Etime);
          if (Settle_tics) Settle_tics--;
-            else {Diff = (signed int )Etime - (signed int )Old_Etime;
-                  Old_Dev = Old_Dev + (absVal(Diff)-Old_Dev)>>2;
-                  bbcp_Config.Jitter = Old_Dev;
-                 }
+//          else {Diff = (signed int )Etime - (signed int )Old_Etime;
+//                Old_Dev = Old_Dev + (absVal(Diff)-Old_Dev)>>2;
+//                bbcp_Config.Jitter = Old_Dev;
+//               }
          Old_Etime = Etime;
          if (Etime < Window) Ticker.Wait(Window-Etime);
          if (Buddy) Buddy->Rendezvous.Post();
@@ -271,10 +273,24 @@ int bbcp_Link::Control_In(bbcp_Buffer *bp)
     int  newsz;
     bbcp_Header *hp = &bp->bHdr;
 
-// Check if this is a close request. If so, queue the message and terminate
+// Check if this is a vanilla close request.
 //
    if (hp->cmnd == (char)BBCP_CLOSE)
       {DEBUG("Close request received on link " <<LinkNum);
+       bp->blen = 0;
+       bbcp_BPool.putFullBuff(bp);
+       return 0;
+      }
+
+// Check if this is a checksum close request.
+//
+   if (hp->cmnd == (char)BBCP_CLCKS)
+      {DEBUG("Checksum close request received on link " <<LinkNum);
+       if (bbcp_Config.csOpts & bbcp_csSend)
+          {DEBUG("Setting checksum from link " <<LinkNum);
+           bbcp_Config.setCS(bp->bHdr.cksm);
+           bp->blen = 0;
+          }
        bbcp_BPool.putFullBuff(bp);
        return 0;
       }
@@ -285,17 +301,6 @@ int bbcp_Link::Control_In(bbcp_Buffer *bp)
       {DEBUG("Abort request received on link " <<LinkNum);
        bbcp_BPool.putFullBuff(bp);
        return -1;
-      }
-
-// Check if this is a set window size request
-//
-   if (hp->cmnd == (char)BBCP_SETWS)
-      {DEBUG("Setws request received on link" <<LinkNum);
-       if (bp->boff > (long long)bbcp_BPool.BuffSize() ||  bp->boff <= 0)
-          return bbcp_Emsg("netctl", EINVAL, "invalid window size from", Lname);
-          else bbcp_Net.setWBSize("Control_In", IOB.FD(), (int )bp->boff);
-       bbcp_BPool.putEmptyBuff(bp);
-       return 1;
       }
 
 // Unknown command here
@@ -309,29 +314,31 @@ int bbcp_Link::Control_In(bbcp_Buffer *bp)
   
 int bbcp_Link::Control_Out(bbcp_Buffer *bp)
 {
-    bbcp_Header *hp = &bp->bHdr;
 
-// We are called because the buffer length is zero. Decode the action:
-// EOF condition (offset >=0),
+// We are called because the buffer length is <= 0 which is the action code.
 //
-   if (bp->boff >= 0)
-      {bbcp_BPool.Encode(bp, BBCP_CLOSE, 0);
+
+// EOF condition
+//
+   if ((!(bp->blen) && bp->boff >= 0) || bp->blen == -BBCP_CLOSE)
+      {bbcp_BPool.Encode(bp, BBCP_CLOSE);
        DEBUG("Sending close request on link " <<LinkNum);
        return 0;
       }
 
-// ABORT (offset = -1)
+// CLOSE with checksum
 //
-   if (bp->boff == -1)       
-      {bbcp_BPool.Encode(bp, BBCP_ABORT, 0);
-       DEBUG("Sending abort request on link " <<LinkNum);
-       return -1;
+   if (bp->blen == -BBCP_CLCKS)
+      {bp->blen = 0;
+       bbcp_BPool.Encode(bp, BBCP_CLCKS);
+       DEBUG("Sending close+chksum request on link " <<LinkNum);
+       return 0;
       }
 
-// SETWS (abs(offset))
+// ABORT
 //
-   bp->boff=-bp->boff; 
-   bbcp_BPool.Encode(bp, BBCP_SETWS, 0);
-   DEBUG("Sending setws request on link " <<LinkNum);
-   return 1;
+   bp->blen = 0;
+   bbcp_BPool.Encode(bp, BBCP_ABORT);
+   DEBUG("Sending abort request on link " <<LinkNum);
+   return -1;
 }

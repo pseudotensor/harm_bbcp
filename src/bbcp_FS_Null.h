@@ -23,6 +23,8 @@ int        Applicable(const char *path);
 
 int        Enough(long long bytes, int numfiles=1) {return 1;}
 
+long long  getSize(int fd, long long *bsz=0);
+
 bbcp_File *Open(const char *fn, int opts, int mode=0);
 
 int        MKDir(const char *path, mode_t mode) {return 0;}

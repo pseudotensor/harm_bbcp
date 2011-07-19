@@ -52,7 +52,8 @@ void bbcp_ProgMon::Monitor()
    double        xfrtime, xfrtnow;
    bbcp_Timer    etime;
    char          buff[200], tbuff[24], cxinfo[40], *cxip;
-   int           bewordy = bbcp_Config.Options & (bbcp_VERBOSE | bbcp_BLAB);
+   const char    *xtXB, *xaXB;
+   int           bewordy = bbcp_Config.Options & bbcp_VERBOSE;
 
 // Determine whether we need to report compression ratio
 //
@@ -62,13 +63,12 @@ void bbcp_ProgMon::Monitor()
 // Run a loop until we are killed, reporting what we see
 //
    etime.Start(); etime.Report(lasttime);
-   while(!alldone)
-      {if (!CondMon.Wait(wtime) || alldone) break;
-       etime.Stop(); etime.Report(elptime);
+   while(!alldone && CondMon.Wait(wtime))
+      {etime.Stop(); etime.Report(elptime);
 
        curbytes = FSp->Stats();
        pdone = curbytes*100/Tbytes;
-       xfrtime = curbytes/(((double)elptime)/1000.0)/1024.0;
+       xfrtime = curbytes/(((double)elptime)/1000.0);
 
        if (CXp)
           {if (!(cxbytes = CXp->Bytes())) cratio = 0.0;
@@ -78,24 +78,31 @@ void bbcp_ProgMon::Monitor()
 
        if (bewordy)
           {intvtime = elptime - lasttime;
-           xfrtnow = (curbytes-lastbytes)/(((double)intvtime)/1000.0)/1024.0;
+           xfrtnow = (curbytes-lastbytes)/(((double)intvtime)/1000.0);
+           xaXB = bbcp_Config::Scale(xfrtnow);
           }
        lastbytes = curbytes;
        lasttime  = elptime;
+       xtXB = bbcp_Config::Scale(xfrtime);
 
-       etime.Format(tbuff);
+       if (bbcp_Config.Logfn) *tbuff = 0;
+          else etime.Format(tbuff);
        if (bewordy)
-          sprintf(buff, "bbcp: At %s copy %d%% complete; %.1f KB/s, "
-                        "avg %.1f KB/s%s sdv %ld\n",
-                        tbuff,  pdone, xfrtnow, xfrtime, cxip,
-                        bbcp_Config.Jitter);
+          sprintf(buff, "bbcp: %s %d%% done; %.1f %sB/s, "
+                        "avg %.1f %sB/s%s\n",
+                        tbuff,  pdone, xfrtnow, xtXB, xfrtime, xaXB, cxip);
           else
-          sprintf(buff, "bbcp: At %s copy %d%% complete; %.1f KB/s%s\n",
-                         tbuff,  pdone, xfrtime, cxip);
+          sprintf(buff, "bbcp: %s %d%% done; %.1f %sB/s%s\n",
+                         tbuff,  pdone, xfrtime, xtXB, cxip);
        cerr <<buff <<flush;
       }
-}
 
+// Post the semaphore to indicate we are done. This is a far safer way to
+// synchronize exits than using pthread_join().
+//
+   monDone.Post();
+}
+  
 /******************************************************************************/
 /*                                 S t a r t                                  */
 /******************************************************************************/
@@ -118,7 +125,7 @@ void bbcp_ProgMon::Start(bbcp_File *fs_obj, bbcp_ZCX *cx_obj, int pint,
 
 // Run a thread to start the monitor
 //
-   if (retc = bbcp_Thread_Start(bbcp_MonProg, (void *)this, &mytid))
+   if (retc = bbcp_Thread_Run(bbcp_MonProg, (void *)this, &mytid))
       {DEBUG("Error " <<retc <<" starting progress monitor thread.");}
       else {DEBUG("Thread " <<mytid <<" monitoring progress.");}
    return;
@@ -131,14 +138,13 @@ void bbcp_ProgMon::Start(bbcp_File *fs_obj, bbcp_ZCX *cx_obj, int pint,
 void bbcp_ProgMon::Stop()
 {
 
-// Simply issue a kill to the thread running the progress monitor
+// Simply issue a cancel to the thread running the progress monitor
 //
    alldone = 1;
    if (mytid) 
       {DEBUG("Progress monitor " <<mytid <<" stopped.");
        CondMon.Signal(); 
-       bbcp_Thread_Wait(mytid);
+       monDone.Wait();
        mytid = 0;
       }
-   return;
 }
