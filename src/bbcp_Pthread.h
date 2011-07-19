@@ -101,9 +101,12 @@ class bbcp_Semaphore
 public:
 
 inline int  CondWait()
-       {if (sem_trywait( &h_semaphore ))
-           if (errno == EBUSY) return 0;
-               else { throw "sem_CondWait() failed", errno;}
+       {int rc;
+        do {rc=sem_trywait( &h_semaphore );} while (rc && errno==EINTR);
+           if (rc)
+              {if (errno == EBUSY) return 0;
+                  {throw "sem_CondWait() failed", errno;}
+              }
         return 1;
        }
 
@@ -111,8 +114,9 @@ inline void Post() {if (sem_post(&h_semaphore))
                        {throw "sem_post() failed", errno;}
                    }
 
-inline void Wait() {if (sem_wait(&h_semaphore))
-                       {throw "sem_wait() failed", errno;}
+inline void Wait() {int rc;
+                    do {rc=sem_wait(&h_semaphore);} while (rc && errno==EINTR);
+                    if (rc) {throw "sem_wait() failed", errno;}
                    }
 
   bbcp_Semaphore(int semval=1) {if (sem_init(&h_semaphore, 0, semval))
@@ -131,8 +135,8 @@ sem_t h_semaphore;
 extern "C"
 {
 int   bbcp_Thread_Cancel(pthread_t tid);
+int   bbcp_Thread_CanType(int Async);
 int   bbcp_Thread_Detach(pthread_t tid);
-int   bbcp_Thread_Kill(pthread_t tid);
 void  bbcp_Thread_MT(int mtlvl);
 int   bbcp_Thread_Run(  void *(*proc)(void *), void *arg, pthread_t *tid);
 int   bbcp_Thread_Signal(pthread_t tid, int snum);

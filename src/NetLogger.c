@@ -1,9 +1,9 @@
 /*
- * $Author: tierney $
+ * $Author: abh $
  * $RCSfile: NetLogger.c,v $
- * $Revision: 1.2 $
+ * $Revision: 1.1.1.1 $
  * $Locker:  $
- * $Date: 2001/10/15 08:10:36 $
+ * $Date: 2010/07/30 01:34:50 $
  */
 
 
@@ -38,7 +38,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-    "@(#) $Id: NetLogger.c,v 1.2 2001/10/15 08:10:36 tierney Exp $";
+    "@(#) $Id: NetLogger.c,v 1.1.1.1 2010/07/30 01:34:50 abh Exp $";
 #endif
 
 #include <sys/types.h>
@@ -2048,7 +2048,7 @@ NetLogSetMethod (char *s,	/* Value of environment variable */
     if (!s)
       {
 	  nl_status ("NetLogger URL is NULL");
-	  *method_p = (int) NULL;
+	  *method_p = 0; // static_cast<int *>(NULL);
 	  return;
       }
     if (!strncmp (s, "file://", 7))

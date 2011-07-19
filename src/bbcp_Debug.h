@@ -30,11 +30,5 @@ extern bbcp_Debug bbcp_Debug;
 #define DEBUGON    (bbcp_Debug.Trace)
 
 #define DEBUG(x)  {if (bbcp_Debug.Trace) \
-                      cerr << "bbcp_" <<bbcp_Debug.Who <<' ' <<bbcp_Debug.mypid <<": " <<x <<endl;}
-  
-#define DEBUGs(x) {if (bbcp_Debug.Trace)) \
-                      cerr << "bbcp_" <<bbcp_Debug.Who <<' ' <<bbcp_Debug.mypid <<": " <<x <<flush;}
-  
-#define DEBUGz(x) {if (bbcp_Debug.Trace) \
-                      cerr << x <<flush;}
+                      cerr << "bbcp_" <<bbcp_Debug.Who <<' ' <<bbcp_Debug.mypid <<": " <<x <<endl <<flush;}
 #endif

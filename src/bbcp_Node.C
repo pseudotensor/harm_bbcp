@@ -40,7 +40,7 @@ extern bbcp_System   bbcp_OS;
 /******************************************************************************/
 /*            E x t e r n a l   T h r e a d   I n t e r f a c e s             */
 /******************************************************************************/
-  
+
 extern "C"
 {
 void *bbcp_doCX(void *pp)
@@ -73,8 +73,7 @@ void *bbcp_Connect(void *protp)
      bbcp_Link     *link;
      int            retc;
 
-     if (link = bbcp_Net.Connect(bbcp_Config.CBhost, bbcp_Config.CBport,
-                                 bbcp_Config.Wsize))
+     if (link = bbcp_Net.Connect(bbcp_Config.CBhost, bbcp_Config.CBport))
         {if ((retc = protocol->Login(link, 0)) < 0)
             {delete link; link = 0;}
         }
@@ -109,12 +108,12 @@ bbcp_Node::bbcp_Node(bbcp_Link *netLink)
 /*                            g e t B u f f e r s                             */
 /******************************************************************************/
   
-int bbcp_Node::getBuffers()
+int bbcp_Node::getBuffers(int isTrg, int isLZO)
 {
 
 // Allocate the buffers
 //
-   return bbcp_BPool.Allocate(bbcp_Config.BNum, bbcp_Config.Wsize);
+   return bbcp_BPool.Allocate(bbcp_Config.BNum, bbcp_Config.RWBsz, isTrg);
 }
 
 /******************************************************************************/
@@ -216,9 +215,14 @@ int bbcp_Node::Run(char *user, char *host, char *prog, char *parg)
 /*                                  S t o p                                   */
 /******************************************************************************/
 
-void bbcp_Node::Stop()
+void bbcp_Node::Stop(int Report)
 {
    int i;
+
+// If window reporting wanted do so only if very verbose and autotuning
+//
+   if (bbcp_Config.Options & bbcp_BLAB && bbcp_Net.AutoTune() && data_link[0])
+      chkWsz(data_link[0]->FD(), 1);
 
 // Kill any attached process
 //
@@ -283,8 +287,11 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 
 // Perform Force or Append processing
 //
+
+// Ranch version requires FS()->FSbbcp()
         if (bbcp_Config.Options & bbcp_FORCE)
-           {fp->FS()->RM((const char *)fp->targpath);
+           {if (!(bbcp_Config.Options & bbcp_NOUNLINK))
+               fp->FSbbcp()->RM(fp->targpath);
             oflag = O_WRONLY | O_CREAT | O_TRUNC;
            }
    else if (bbcp_Config.Options & bbcp_APPEND)
@@ -300,8 +307,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
       if (bbcp_Config.Options & bbcp_APPEND) 
          {char buff[32];
           sprintf(buff, "%lld", startoff);
-          bbcp_Fmsg("RecvFile", "Appending to",
-                    fp->targpath, (char *)"at offset", buff);
+          bbcp_Fmsg("RecvFile","Appending to",fp->targpath,"at offset",buff);
          }
          else bbcp_Fmsg("RecvFile", "Creating", fp->targpath);
       else DEBUG("Receiving " <<fp->pathname <<" as " <<fp->targpath <<" offset=" <<startoff);
@@ -317,7 +323,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
        retc = bbcp_OS.Waitpid(Child);
        Parent_Monitor.Stop();
        if (bbcp_Config.Options & bbcp_BLAB)
-          cerr <<Usage("Target", buff, sizeof(buff)) <<endl;
+          write(STDERR_FILENO, buff, Usage("Target", buff, sizeof(buff)));
        return retc;
       }
 
@@ -329,10 +335,15 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 //
    bbcp_Thread_MT(bbcp_Config.MTLevel);
 
+// Request direct I/O if so wanted
+//
+   if (bbcp_Config.Options & bbcp_ODIO) {fp->FSbbcp()->DirectIO(1);
+       DEBUG("Direct output requested.");}
+
 // Open the file and set the starting offset
 //
    Elapsed_Timer.Start();
-   if (!(outFile = fp->FS()->Open((const char *)fp->targpath, oflag, 0200)))
+   if (!(outFile = fp->FSbbcp()->Open(fp->targpath, oflag, 0200)))
       return bbcp_Emsg("RecvFile", errno, "opening", fp->targpath);
    if (startoff && ((retc = outFile->Seek(startoff)) < 0))
       return bbcp_Emsg("RecvFile",retc,"setting write offset for",fp->targpath);
@@ -411,7 +422,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
    outFile->Close();
    if (!retc && strncmp(fp->targpath, "/dev/null/", 10))
       {bbcp_FileInfo Info;
-       if ((retc = fp->FS()->Stat((const char *)fp->targpath, &Info)) < 0)
+       if ((retc = fp->FSbbcp()->Stat(fp->targpath, &Info)) < 0)
           {retc = -retc;
            bbcp_Emsg("RecvFile", retc, "finding", fp->targpath);
           }
@@ -426,7 +437,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 // Report detailed I/O stats, if so wanted
 //
    Elapsed_Timer.Stop();
-   if (!retc && bbcp_Config.Options & (bbcp_BLAB | bbcp_VERBOSE))
+   if (!retc && bbcp_Config.Options & bbcp_VERBOSE)
       {double ttime;
        Elapsed_Timer.Report(ttime);
        Report(ttime, fp, outFile, cxp);
@@ -451,7 +462,7 @@ int bbcp_Node::RecvFile(bbcp_FileSpec *fp)
 
 int bbcp_Node::SendFile(bbcp_FileSpec *fp)
 {
-   int i, retc, tretc = 0;
+   int i, retc, tretc = 0, oflag = O_RDONLY;
    pid_t Child[2] = {0,0};
    bbcp_File *inFile;
    bbcp_ProcMon *TLimit = 0;
@@ -469,7 +480,7 @@ int bbcp_Node::SendFile(bbcp_FileSpec *fp)
        retc = bbcp_OS.Waitpid(Child);
        Parent_Monitor.Stop();
        if (bbcp_Config.Options & bbcp_BLAB)
-          cerr <<Usage("Source", buff, sizeof(buff)) <<endl;
+          write(STDERR_FILENO, buff, Usage("Source", buff, sizeof(buff)));
        return retc;
       }
 
@@ -481,9 +492,14 @@ int bbcp_Node::SendFile(bbcp_FileSpec *fp)
 //
    bbcp_Thread_MT(bbcp_Config.MTLevel);
 
+// Request direct I/O if so wanted
+//
+   if (bbcp_Config.Options & bbcp_IDIO) {fp->FSbbcp()->DirectIO(1);
+       DEBUG("Direct input requested.");}
+
 // Open the input file and set starting offset
 //
-   if (!(inFile = fp->FS()->Open((const char *)fp->pathname, O_RDONLY)))
+   if (!(inFile = fp->FSbbcp()->Open(fp->pathname, oflag)))
       {bbcp_Emsg("SendFile", errno, "opening", fp->pathname);
        exit(2);
       }
@@ -521,8 +537,7 @@ int bbcp_Node::SendFile(bbcp_FileSpec *fp)
 
 // Read the whole file
 //
-   if (bbcp_Config.Options & bbcp_COMPRESS)
-           retc = inFile->Read_All(bbcp_APool, 1);
+   if (bbcp_Config.Options & bbcp_COMPRESS) retc=inFile->Read_All(bbcp_APool,1);
       else retc = inFile->Read_All(bbcp_BPool, bbcp_Config.Bfact);
    DEBUG("File read ended; rc=" <<retc);
 
@@ -561,27 +576,25 @@ int bbcp_Node::SendFile(bbcp_FileSpec *fp)
 /*                                c h k W s z                                 */
 /******************************************************************************/
   
-void bbcp_Node::chkWsz(int fd)
+void bbcp_Node::chkWsz(int fd, int Final)
 {
    int wbsz = bbcp_Net.getWBSize(fd, bbcp_Config.Options & bbcp_SRC);
-   char mbuff[128], *fmode;
+   const char *fmode = (bbcp_Config.Options & bbcp_SRC ? "send"   : "recv");
+   const char *smode = (bbcp_Config.Options & bbcp_SRC ? "Source" : "Target");
+   const char *Wtype;
+   char mbuff[256];
+   int n;
 
-// Note that the recv window size needs only to be bigger than what was
-// requested (and usually will be so). So, warn only if it's smaller
+// Figure out window type
 //
-   if (bbcp_Config.Options & bbcp_SRC && wbsz != bbcp_Config.Wsize)
-       fmode = (char *)"send";
-      else if (wbsz < bbcp_Config.Wsize) fmode = (char *)"recv";
-              else fmode = 0;
+   if (Final) Wtype = "a final";
+      else    Wtype = (bbcp_Net.AutoTune() ? "initial" : "a fixed");
 
-// Issue message if we need to
+// Issue message
 //
-   if (fmode)
-      {sprintf(mbuff, "%s window size of %d not %d",
-                      fmode, wbsz, bbcp_Config.Wsize);
-       bbcp_Fmsg("chkWsz", (const char *)bbcp_Config.MyHost,
-                 (char *)"kernel using a", mbuff);
-      }
+   n = sprintf(mbuff, "%s %s using %s %s window of %d\n",
+                      smode, bbcp_Config.MyHost, Wtype, fmode, wbsz);
+   write(STDERR_FILENO, mbuff, n);
 }
 
 /******************************************************************************/
@@ -634,7 +647,7 @@ int bbcp_Node::Incomming(bbcp_Protocol *protocol)
 
 // Initialize the buddy pipeline; a patented way of ensuring maximum parallelism
 //
-   if (dlcount > 1)
+   if (dlcount > 1 && (bbcp_Config.Options & bbcp_SRC))
       {i = dlcount-1;
        data_link[i]->setBuddy(data_link[0]);
        while(i--) data_link[i]->setBuddy(data_link[i+1]);
@@ -642,8 +655,7 @@ int bbcp_Node::Incomming(bbcp_Protocol *protocol)
 
 // Determine what the actual window size is (only if verbose)
 //
-   if (bbcp_Config.Options & (bbcp_BLAB | bbcp_VERBOSE))
-      chkWsz(data_link[0]->FD());
+   if (bbcp_Config.Options & bbcp_BLAB) chkWsz(data_link[0]->FD());
    return 0;
 }
   
@@ -658,8 +670,7 @@ int bbcp_Node::Outgoing(bbcp_Protocol *protocol)
 
 // Establish the control connection first
 //
-   if (link = bbcp_Net.Connect(bbcp_Config.CBhost, bbcp_Config.CBport,
-                               bbcp_Config.Wsize, 3))
+   if (link = bbcp_Net.Connect(bbcp_Config.CBhost, bbcp_Config.CBport, 3))
       if ((retc = protocol->Login(link, 0)) < 0)
          {delete link; link = 0;}
 
@@ -693,8 +704,7 @@ int bbcp_Node::Outgoing(bbcp_Protocol *protocol)
 
 // Determine what the actual window size is (only if verbose)
 //
-   if (bbcp_Config.Options & (bbcp_BLAB | bbcp_VERBOSE))
-      chkWsz(data_link[0]->FD());
+   if (bbcp_Config.Options & bbcp_BLAB) chkWsz(data_link[0]->FD());
 
 // If we are clocking out data, insert a special clocking link
 //
@@ -706,7 +716,7 @@ int bbcp_Node::Outgoing(bbcp_Protocol *protocol)
 
 // Initialize the buddy pipeline; a patented way of ensuring maximum parallelism
 //
-   if (dlcount > 1)
+   if (dlcount > 1 && (bbcp_Config.Options & bbcp_SRC))
       {i = dlcount-1;
        data_link[i]->setBuddy(data_link[0]);
        while(i--) data_link[i]->setBuddy(data_link[i+1]);
@@ -735,27 +745,34 @@ void bbcp_Node::Report(double ttime, bbcp_FileSpec *fp, bbcp_File *ioFile,
                        bbcp_ZCX *cxp)
 {
 float  cratio;
-double xtime;
+double xtime, xrate;
 long long xbytes, cxbytes;
-char buff[128];
+const char *xType;
+char buff[128], Line[2048];
+int n;
 
-// Print the summary
+// Calculate compression ratio
 //
    xbytes = ioFile->Stats(xtime);
-   sprintf(buff, "%.1f", (((double)xbytes)/ttime)/1024.0);
-   cerr <<"File " <<fp->targpath <<" created; " <<xbytes <<" bytes at " <<buff <<" KB/s";
    if (cxp)
       {if (!(cxbytes = cxp->Bytes())) cratio = 0.0;
           else cratio = ((float)(xbytes*10/cxbytes))/10.0;
-       sprintf(buff, "%.1f", cratio);
-       cerr << " compressed " <<buff <<endl;
-      } else cerr <<endl;
+       sprintf(buff, " compressed %.1f", cratio);
+      } else *buff = 0;
+
+// Print the summary
+//
+   xrate = ((double)xbytes)/ttime; xType = bbcp_Config::Scale(xrate);
+   n = sprintf(Line, "File %s created; %lld bytes at %.1f %sB/s%s\n",
+               fp->targpath, xbytes, xrate, xType, buff);
+   write(STDERR_FILENO, Line, n);
    if (!(bbcp_Config.Options & bbcp_BLAB)) return;
 
 // Tell user how many reorder events there were
 //
-   cerr <<bbcp_BPool.BuffCount() <<" buffers used with ";
-   cerr <<ioFile->bufreorders <<" reorders; peaking at " <<ioFile->maxreorders <<'.' <<endl;
+   n = sprintf(Line, "%d buffers used with %d reorders; peaking at %d.\n",
+              bbcp_BPool.BuffCount(), ioFile->bufreorders, ioFile->maxreorders);
+   write(STDERR_FILENO, Line, n);
 }
  
 /******************************************************************************/
@@ -785,7 +802,8 @@ bbcp_ZCX *bbcp_Node::setup_CX(int deflating, int iofd)
 
 // Allocate buffers in the A pool
 //
-   if (bbcp_APool.Allocate(bbcp_Config.Bfact, bbcp_Config.CXBsz)) return 0;
+   if (bbcp_APool.Allocate(bbcp_Config.BNum, bbcp_Config.RWBsz, !deflating))
+      return 0;
 
 // Allocate a new compression/expansion object
 //
@@ -812,16 +830,12 @@ bbcp_ZCX *bbcp_Node::setup_CX(int deflating, int iofd)
 /*                                 U s a g e                                  */
 /******************************************************************************/
   
-char *bbcp_Node::Usage(const char *who, char *buff, int blen)
+int bbcp_Node::Usage(const char *who, char *buff, int blen)
 {
-      float cpu;
-      int   mem, pfs, swp, usec;
+      int   Tsec, Ssec, Usec;
 
-      mem = bbcp_OS.Usage(usec, pfs, swp);
-      cpu = ((float)usec)/1000.0;
+      Tsec = bbcp_OS.Usage(Ssec, Usec);
 
-      snprintf(buff, blen, "%s cpu=%.3f mem=%dK pflt=%ld swap=%ld",
-               who, cpu, mem/1024, pfs, swp);
-
-      return buff;
+      return snprintf(buff, blen, "%s cpu=%.3f (sys=%.3f usr=%.3f).\n", who,
+             ((float)Tsec)/1000.0, ((float)Ssec)/1000.0, ((float)Usec)/1000.0);
 }

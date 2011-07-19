@@ -46,7 +46,9 @@ void             ExtendFileSpec(bbcp_FileSpec* headp);
 
 int              Finalize(int retc=0);
 
-bbcp_FileSystem *FS() {return FSp;}
+//bbcp_FileSystem *FS() {return FSp;}
+// Ranch version uses below to compile properly:
+bbcp_FileSystem *FSbbcp() {return FSp;}
 
 void             Parse(char *spec);
 
@@ -59,13 +61,9 @@ int              WriteSigFile();
 int              Xfr_Done();
 
      bbcp_FileSpec(bbcp_FileSystem *fsp=0, char *hname = 0, char *uname=0)
-                     {username = uname; hostname = hname;
-                      fspec2 = fspec = pathname = filename = 0;
-                      targpath = targetfn = targsigf = 0;
-                      targetsz = 0;
-                      next = 0;
-                      FSp = fsp;
-                     }
+                  : next(0), username(uname), hostname(hname), pathname(0),
+                    pathrltv(0), filename(0), targpath(0), targetfn(0),
+                    targetsz(0), targsigf(0), fspec(0), fspec2(0), FSp(fsp) {}
     ~bbcp_FileSpec() {if (fspec)    free(fspec);
                       if (fspec2)   free(fspec2);
                       if (targpath) free(targpath);

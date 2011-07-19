@@ -168,13 +168,14 @@ extern "C"
 int bbcp_Thread_Cancel(pthread_t tid)
     {return pthread_cancel(tid);}
 
+int bbcp_Thread_CanType(int Async)
+    {int oldType;
+     return pthread_setcanceltype((Async ? PTHREAD_CANCEL_ASYNCHRONOUS
+                                         : PTHREAD_CANCEL_DEFERRED), &oldType);
+    }
+
 int bbcp_Thread_Detach(pthread_t tid)
     {return pthread_detach(tid);}
-
-int bbcp_Thread_Kill(pthread_t tid)
-    {
-     return pthread_kill((pthread_t)tid, SIGKILL);
-    }
 
 int  bbcp_Thread_Run(void *(*proc)(void *), void *arg, pthread_t *tid)
      {int retc = bbcp_Thread_Start(proc, arg, tid);
@@ -202,6 +203,7 @@ void *bbcp_Thread_Wait(pthread_t tid)
 void bbcp_Thread_MT(int mtval)
    {
 #ifdef SUN
+#ifndef SUN6 // Ranch version added this #ifndef SUN6
     int rc, oldmt = pthread_getconcurrency(), newmt = mtval;
 
     while(mtval)
@@ -209,6 +211,7 @@ void bbcp_Thread_MT(int mtval)
             else break;
 
     DEBUG("MT set rc=" <<rc <<" omt=" <<oldmt <<" rmt=" <<newmt <<" nmt=" <<mtval);
+#endif
 #endif
    }
 }

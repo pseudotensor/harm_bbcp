@@ -19,7 +19,8 @@
 // a "file". The actual I/O are determined by the associated filesystem and
 // are specified during instantiation.
 
-class bbcp_FileSystem;
+class  bbcp_FileChkSum;
+class  bbcp_FileSystem;
 
 class bbcp_File
 {
@@ -37,9 +38,14 @@ bbcp_FileSystem *Fsys() {return FSp;}
 //
 int          ioFD() {return IOB->FD();}
 
-// Write a record to a file
+// Read a record from a file
 //
 ssize_t      Get(char *buff, size_t blen) {return IOB->Read(buff, blen);}
+
+// Internal buffer-to-buffer passthrough function
+//
+int          Passthru(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP,
+                      bbcp_FileChkSum *csP, int nstrms);
 
 // Return path to the file
 //
@@ -51,7 +57,7 @@ ssize_t      Put(char *buff, size_t blen) {return IOB->Write(buff, blen);}
 
 // Read_All() reads the file until eof and returns 0 (success) or -errno.
 //
-int          Read_All(bbcp_BuffPool &buffpool, int blkf);
+int          Read_All(bbcp_BuffPool &buffpool, int Bfact);
 
 // Write_All() writes the file until eof and return 0 (success) or -errno.
 //
@@ -61,17 +67,9 @@ int          Write_All(bbcp_BuffPool &buffpool, int nstrms);
 //
 int          Seek(long long offv) {nextoffset = offv; return IOB->Seek(offv);}
 
-// Set buffer size for future I/O
-
-void         setBuffSize(bbcp_BuffPool &buffpool, int  bsz);
-
 // setSize() sets the expected file size
 //
 void         setSize(long long top) {lastoff = top;}
-
-// setSN() sets the stream number to allow for multiplexed file I/O.
-//
-void         setSN(int sn) {snum = sn;}
 
 // Stats() reports the i/o time and buffer wait time in milliseconds and
 //         returns the total number of bytes transfered.
@@ -80,7 +78,8 @@ long long    Stats(double &iotime) {return IOB->ioStats(iotime);}
 
 long long    Stats()               {return IOB->ioStats();}
 
-             bbcp_File(const char *path, bbcp_IO *iox, bbcp_FileSystem *fsp);
+             bbcp_File(const char *path, bbcp_IO *iox,
+                       bbcp_FileSystem *fsp, int secSize=0);
 
             ~bbcp_File() {if (iofn) free(iofn);
                           if (IOB)  delete IOB;
@@ -91,20 +90,22 @@ int          maxreorders;
 
 private:
 
-int              curq;
 bbcp_Buffer     *nextbuff;
 long long        nextoffset;
 long long        lastoff;
-short            snum;
+long long        bytesLeft;
+long long        blockSize;
+int              curq;
 bbcp_IO         *IOB;
 bbcp_FileSystem *FSp;
 char            *iofn;
 
-int              newBuffSize;
-int              curBuffSize;
-bbcp_Mutex       ctlmutex;
-
-int          getBuffSize();
 bbcp_Buffer *getBuffer(long long offset);
+int          Read_Direct (bbcp_BuffPool *inB, bbcp_BuffPool *otP);
+int          Read_Normal (bbcp_BuffPool *inB, bbcp_BuffPool *otP);
+int          Read_Vector (bbcp_BuffPool *inB, bbcp_BuffPool *otP, int vN);
+int          verChkSum(bbcp_FileChkSum *csP);
+int          Write_Direct(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP, int nstrms);
+int          Write_Normal(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP, int nstrms);
 };
 #endif

@@ -2,7 +2,7 @@
 /*                                                                            */
 /*                        b b c p _ V e r s i o n . h                         */
 /*                                                                            */
-/* (c) 2002 by the Board of Trustees of the Leland Stanford, Jr., University  */
+/* (c) 2010 by the Board of Trustees of the Leland Stanford, Jr., University  */
 /*      All Rights Reserved. Scroll to end for Terms and Conditions of use    */
 /*   Produced by Andrew Hanushevsky for Stanford University under contract    */
 /*              DE-AC03-76-SFO0515 with the Department of Energy              */
@@ -30,9 +30,9 @@ extern bbcp_Config  bbcp_Config;
   
 bbcp_Version::bbcp_Version()
 {
-Copyright = "(c) 2005 by the Board of Trustees of the Leland Stanford, Jr., University";
+Copyright = "(c) 2010 by the Board of Trustees of the Leland Stanford, Jr., University";
 Author    = "Andrew Hanushevsky";
-Version   = "Version: 07.11.09.01.0";
+Version   = "Version: 10.07.26.00.0";
 //           0123456789
 VData     = Version+9;
 };
@@ -59,14 +59,11 @@ int bbcp_Version::Verify(char *node, char *nodever)
        else if (vchk > 0) vset = (char *)"a newer";
                else return 1;
 
-    bbcp_Fmsg("Version", "Warning:", node, (char *)"is running", vset,
-                         (char *)"version of bbcp");
+    bbcp_Fmsg("Version", "Warning:",node,"is running",vset,"version of bbcp");
 
-    if (bbcp_Config.Options & (bbcp_BLAB | bbcp_VERBOSE))
-       {bbcp_Fmsg("Version", (const char *)node, (char *)"running version", 
-                  nodever);
-        bbcp_Fmsg("Version", (const char *)bbcp_Config.MyHost,
-                  (char *)"running version", (char *)VData);
+    if (bbcp_Config.Options & bbcp_BLAB)
+       {bbcp_Fmsg("Version", node, "running version", nodever);
+        bbcp_Fmsg("Version", bbcp_Config.MyHost, "running version", VData);
        }
     return 0;
 };
@@ -76,7 +73,7 @@ int bbcp_Version::Verify(char *node, char *nodever)
 /******************************************************************************/
   
 const char *bbcp_License =
-"Copyright (c) 2005, Board of Trustees of the Leland Stanford, Jr. University.\n"
+"Copyright (c) 2005-2010, Board of Trustees of the Leland Stanford, Jr. University.\n"
 "Produced under contract DE-AC03-76-SF00515 with the US Department of Energy. \n"
 "All rights reserved.                                                         \n"
 "Redistribution and use in source and binary forms, with or without           \n"

@@ -29,7 +29,7 @@ void   Detach() {NStream.Detach(); dlcount = 0; data_link[0] = 0;}
 
 int    Drain() {return NStream.Drain();}
 
-int    getBuffers();
+int    getBuffers(int isTrg, int isLZO=0);
 
 char  *GetLine();
 
@@ -39,8 +39,8 @@ int    LastError() {return NStream.LastError();}
 
 char  *NodeName() {return nodename;}
 
-int    Put(const char *data,   const int dlen)
-          {char *dpnt[] = {(char *)data, 0}; int lpnt[] = {(int)dlen, 0};
+int    Put(const char *data, int dlen)
+          {char *dpnt[] = {(char *)data, 0}; int lpnt[] = {dlen, 0};
            return Put(dpnt, lpnt);
           }
 int    Put(char *data[], int dlen[]);
@@ -56,7 +56,7 @@ int    Start(bbcp_Protocol *protocol, int incomming)
                  else       return  Outgoing(protocol);
             }
 
-void   Stop();
+void   Stop(int Report=0);
 
 int    Wait(bbcp_Node *other=0);
 
@@ -76,12 +76,12 @@ char       *nodename;
 int         dlcount;
 int         iocount;
 
-void       chkWsz(int fd);
+void       chkWsz(int fd, int Final=0);
 int        Incomming(bbcp_Protocol *protocol);
 int         Outgoing(bbcp_Protocol *protocol);
 int        Recover(const char *who);
 void       Report(double, bbcp_FileSpec *, bbcp_File *, bbcp_ZCX *);
 bbcp_ZCX  *setup_CX(int deflating, int iofd);
-char      *Usage(const char *who, char *buff, int blen);
+int        Usage(const char *who, char *buff, int blen);
 };
 #endif

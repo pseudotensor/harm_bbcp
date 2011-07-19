@@ -11,9 +11,6 @@
 #include <iostream.h>
 #include "bbcp_FS_Null.h"
 #include "bbcp_FS_Unix.h"
-#ifdef BBCP_VXFS
-#include "bbcp_FS_VXFS.h"
-#endif
 
 // This file holds the function that returns an applicable filesystem object
 // for any given path (or null if none can be found). We do this by simply
@@ -28,10 +25,6 @@ bbcp_FS_Null bbcp_NULL;
   
 bbcp_FS_Unix bbcp_UFS;
 
-#ifdef BBCP_VXFS
-bbcp_FS_VXFS bbcp_VXFS;
-#endif
-
 /******************************************************************************/
 /*                    b b c p _ g e t F i l e S y s t e m                     */
 /******************************************************************************/
@@ -42,9 +35,6 @@ bbcp_FileSystem *bbcp_getFileSystem(const char *path)
 // Simply try each supported filesystem (add more as they are defined)
 //
    if (bbcp_NULL.Applicable(path))  return (bbcp_FileSystem *)&bbcp_NULL;
-#ifdef BBCP_VXFS
-   if (bbcp_VXFS.Applicable(path))  return (bbcp_FileSystem *)&bbcp_VXFS;
-#endif
    if (bbcp_UFS.Applicable(path))   return (bbcp_FileSystem *)&bbcp_UFS;
 
 // All done, nothing is applicable

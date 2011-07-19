@@ -33,7 +33,9 @@
 #endif
 
 #if defined(FREEBSD) || defined(MACOS)
+#ifndef O_DSYNC
 #define O_DSYNC 0
+#endif
 #endif
 
 #if defined(FREEBSD) || defined(MACOS) || defined(AIX)
@@ -115,9 +117,18 @@
 
 #endif
 
+// Ranch version added below SUN6 conditional
+#ifdef SUN6
+typedef int socklen_t;
+typedef       char * gsval_t;
+typedef const char * ssval_t;
+typedef int Size_T;
+#else
 typedef       void * gsval_t;
 typedef       void * ssval_t;
 typedef size_t Size_T;
+#endif
+
 
 #ifdef FREEBSD
 #define EPROTO  EPROTOTYPE

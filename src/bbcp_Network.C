@@ -15,13 +15,18 @@
 #include <errno.h>
 #include <netdb.h>
 #include <poll.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
-#include "bbcp_Config.h"
+#ifdef SUN
+#include <sys/stropts.h>
+#include <inet/nd.h>
+#endif
+#include "bbcp_Debug.h"
 #include "bbcp_Emsg.h"
 #include "bbcp_Network.h"
 #include "bbcp_Platform.h"
@@ -29,10 +34,87 @@
 /******************************************************************************/
 /*                      E x t e r n a l   O b j e c t s                       */
 /******************************************************************************/
-  
-extern bbcp_Config  bbcp_Config;
 
        bbcp_Network bbcp_Net;
+
+/******************************************************************************/
+/*                           C o n s t r u c t o r                            */
+/******************************************************************************/
+  
+bbcp_Network::bbcp_Network()
+{
+   static const int BBCP_IPPROTO_TCP = 6;
+   struct protoent *pp;
+   char netBuff[256];
+   int  netFD;
+
+// Establish this network as having no known attributes
+//
+   iofd = Portnum = -1;
+   maxSegment = 0;
+   maxRcvBuff = 0;
+   maxSndBuff = 0;
+   ATune      = 0;
+   netQoS     = 0;
+   accWait    = 30000;
+   Sender     = 0;
+   Window     = 0;
+   WinSOP     = 0;
+
+// Get the value for the tcp protocol
+//
+   protID = ((pp = getprotobyname("tcp")) ? pp->p_proto : BBCP_IPPROTO_TCP);
+
+
+#ifdef LINUX
+// We are a Linux host, see if autotuning is enabled
+//
+   if ((netFD = open("/proc/sys/net/ipv4/tcp_moderate_rcvbuf", O_RDONLY)) > -1)
+      {if (read(netFD, netBuff, sizeof(netBuff)) > 0 && *netBuff == '1')
+          ATune = 1;
+       close(netFD);
+      }
+
+// Get maximum receive buffer
+//
+   if ((netFD = open("/proc/sys/net/core/rmem_max", O_RDONLY)) > -1)
+      {if (read(netFD, netBuff, sizeof(netBuff)) > 0)
+          {maxRcvBuff = atoi(netBuff);
+           maxRcvBuff = maxRcvBuff*2/8192*8192;
+          }
+       close(netFD);
+      }
+
+// Get maximum send buffer
+//
+   if ((netFD = open("/proc/sys/net/core/wmem_max", O_RDONLY)) > -1)
+      {if (read(netFD, netBuff, sizeof(netBuff)) > 0)
+          {maxSndBuff = atoi(netBuff);
+           maxSndBuff = maxSndBuff*2/8192*8192;
+          }
+       close(netFD);
+      }
+#endif
+#ifdef SUN
+// For Solaris there is no autotuning but we can get the max snd/rcv netBuffer
+//
+   if ((netFD = open("/dev/tcp", O_RDWR)) > -1)
+      {struct strioctl stri;
+       memset(netBuff, 0, sizeof(netBuff));
+       strcpy(netBuff, "tcp_max_buf");
+       stri.ic_cmd = ND_GET;
+       stri.ic_timout = 0;
+       stri.ic_len = sizeof(netBuff);
+       stri.ic_dp = netBuff;
+       if (ioctl(netFD, I_STR, &stri) >= 0)
+          {maxRcvBuff = atoi(netBuff); maxSndBuff = maxRcvBuff;}
+       close(netFD);
+      }
+#endif
+
+// One of these days we will do this for MacOS and FreeBSD as well
+//
+}
 
 /******************************************************************************/
 /*                                A c c e p t                                 */
@@ -53,11 +135,11 @@ bbcp_Link *bbcp_Network::Accept()
 
 // Setup up the poll structure to wait for new connections
 //
-   do {if (bbcp_Config.accwait >= 0)
+   do {if (accWait >= 0)
           {sfd[0].fd     = iofd;
            sfd[0].events = POLLIN|POLLRDNORM|POLLRDBAND|POLLPRI|POLLHUP;
            sfd[0].revents = 0;
-           do {retc = poll(sfd, 1, bbcp_Config.accwait);}
+           do {retc = poll(sfd, 1, accWait);}
                       while(retc < 0 && (errno == EAGAIN || errno == EINTR));
            if (!sfd[0].revents)
               {char buff[16];
@@ -83,12 +165,11 @@ bbcp_Link *bbcp_Network::Accept()
           {bbcp_Fmsg("Accept", "Unable to determine peer name.");
            close(newfd); continue;
           }
-       setOpts("accept", newfd, bbcp_Config.Wsize);
+       setOpts("accept", newfd);
 
     // Allocate a new network object
     //
-       if (!(newconn = new bbcp_Link(newfd, (const char *)newfn,
-                                bbcp_Config.Options & bbcp_MD5CHK)))
+       if (!(newconn = new bbcp_Link(newfd, newfn)))
           {bbcp_Fmsg("Accept", "Unable to allocate new link.");
            close(newfd); newfd = 0;
           }
@@ -122,7 +203,7 @@ int bbcp_Network::Bind(int minport, int maxport, int tries, int timeout)
 //
    if ((iofd = socket(PF_INET, SOCK_STREAM, 0)) < 0)
       return bbcp_Emsg("Bind", -errno, "creating inet socket");
-   setOpts("bind", iofd, bbcp_Config.Wsize);
+   setOpts("bind", iofd);
 
 // Attempt to do a bind
 //
@@ -148,7 +229,7 @@ int bbcp_Network::Bind(int minport, int maxport, int tries, int timeout)
 //
    if (retc) 
       {if (timeout < 0) return -1;
-       return bbcp_Emsg("Bind",-errno,(const char *)action,(char *)"socket");
+       return bbcp_Emsg("Bind",-errno,action,"socket");
       }
 
 // Return the port number being used
@@ -165,13 +246,13 @@ int bbcp_Network::Bind(int minport, int maxport, int tries, int timeout)
 /*                               C o n n e c t                                */
 /******************************************************************************/
 
-bbcp_Link *bbcp_Network::Connect(char *host, int port, int  wsize,
-                                 int retries, int rwait)
+bbcp_Link *bbcp_Network::Connect(char *host, int port, int retries, int rwait)
 {
     struct sockaddr_in InetAddr;
     struct sockaddr *SockAddr = (struct sockaddr *)&InetAddr;
     int SockSize = sizeof(InetAddr);
     int newfd, retc;
+    char *hName;
     bbcp_Link *newlink;
 
 // Determine the host address
@@ -181,18 +262,20 @@ bbcp_Link *bbcp_Network::Connect(char *host, int port, int  wsize,
        return (bbcp_Link *)0;
       }
    InetAddr.sin_port = htons(port);
+   hName = getHostName(InetAddr);
 
 // Allocate a socket descriptor
 //
    if ((newfd = socket(PF_INET, SOCK_STREAM, 0)) < 0)
-      {bbcp_Emsg("Connect", errno, "creating inet socket to", host);
+      {bbcp_Emsg("Connect", errno, "creating inet socket to", hName);
+       free(hName);
        return (bbcp_Link *)0;
       }
 
 // Allocate a new lnk for this socket and set the options
 //
-   setOpts("connect", newfd, wsize);
-   newlink = new bbcp_Link(newfd, host, bbcp_Config.Options & bbcp_MD5CHK);
+   setOpts("connect", newfd);
+   newlink = new bbcp_Link(newfd, hName);
 
 // Connect to the host
 //
@@ -203,12 +286,14 @@ bbcp_Link *bbcp_Network::Connect(char *host, int port, int  wsize,
       {char buff[16];
        delete newlink;
        sprintf(buff, "port %d", port);
-       bbcp_Emsg("Connect", errno, "unable to connect to", host, buff);
+       bbcp_Emsg("Connect", errno, "unable to connect to", hName, buff);
+       free(hName);
        return (bbcp_Link *)0;
       }
 
 // Return the link
 //
+   free(hName);
    return newlink;
 }
 
@@ -219,23 +304,34 @@ bbcp_Link *bbcp_Network::Connect(char *host, int port, int  wsize,
 
 void bbcp_Network::findPort(int &minport, int &maxport)
 {
+   static const char *MinPort = "bbcpfirst";
+   static const char *MaxPort = "bbcplast";
    struct servent sent, *sp;
    char sbuff[1024];
 
 // Try to find minimum port number
 //
    minport = maxport = 0;
-   if (GETSERVBYNAME((const char *)bbcp_Config.MinPort, "tcp", &sent,
-                     sbuff, sizeof(sbuff), sp))
+   if (GETSERVBYNAME(MinPort, "tcp", &sent, sbuff, sizeof(sbuff), sp))
       {minport = ntohs(sp->s_port);
-       if (GETSERVBYNAME((const char *)bbcp_Config.MaxPort, "tcp", &sent,
-                         sbuff, sizeof(sbuff), sp)) maxport = ntohs(sp->s_port);
+       if (GETSERVBYNAME(MaxPort, "tcp", &sent, sbuff, sizeof(sbuff), sp))
+          maxport = ntohs(sp->s_port);
           else maxport = 0;
       }
 
 // Do final port check and return
 //
    if (minport > maxport) minport = maxport = 0;
+}
+
+/******************************************************************************/
+/*                                  F l o w                                   */
+/******************************************************************************/
+  
+void bbcp_Network::Flow(int isSrc)
+{
+   Sender = isSrc;
+   WinSOP = (isSrc ? SO_SNDBUF : SO_RCVBUF);
 }
 
 /******************************************************************************/
@@ -267,9 +363,10 @@ char *bbcp_Network::FullHostName(char *host, int asipadr)
 /*                              M a x W S i z e                               */
 /******************************************************************************/
 
-int bbcp_Network::MaxWSize()
+int bbcp_Network::MaxWSize(int isSink)
 {
    int sfd, cursz, nowwsz, maxwsz = 4*1024*1024, minwsz = 0;
+   int rsOpt = (isSink ? SO_RCVBUF : SO_SNDBUF);
    socklen_t szcur = (socklen_t)sizeof(cursz);
    socklen_t szseg = (socklen_t)sizeof(maxSegment);
    socklen_t sznow;
@@ -285,12 +382,21 @@ int bbcp_Network::MaxWSize()
    if (getsockopt(sfd, IPPROTO_TCP, TCP_MAXSEG, (gsval_t)&maxSegment, &szseg))
       bbcp_Emsg("MaxWSize", errno, "getting TCP maxseg.");
 
+// If we already have the maximum window size (via constructor) then no need
+// to do a discovery.
+//
+   if ((nowwsz = (isSink ? maxRcvBuff : maxSndBuff)))
+      {DEBUG("MaxWin=" <<nowwsz <<" MaxSeg=" <<maxSegment <<" AT=" <<ATune);
+       close(sfd);
+       return nowwsz;
+      }
+
 // Calculate the largest allowed quantity
 //
    do {sznow = (socklen_t)sizeof(nowwsz);
        maxwsz = maxwsz<<1;
-      } while(!(rcs=setsockopt(sfd,SOL_SOCKET,SO_SNDBUF,(ssval_t)&maxwsz, szcur))
-           && !     getsockopt(sfd,SOL_SOCKET,SO_SNDBUF,(gsval_t)&nowwsz,&sznow)
+      } while(!(rcs=setsockopt(sfd,SOL_SOCKET,rsOpt,(ssval_t)&maxwsz, szcur))
+           && !     getsockopt(sfd,SOL_SOCKET,rsOpt,(gsval_t)&nowwsz,&sznow)
            && (maxwsz <= nowwsz) && !(maxwsz & 0x20000000));
 
 // Perform binary search to find the largest buffer allowed
@@ -298,7 +404,7 @@ int bbcp_Network::MaxWSize()
    if (!rcs) minwsz = nowwsz;
       else while(maxwsz - minwsz > 1024)
                 {cursz = minwsz + (maxwsz - minwsz)/2;
-                 if (setsockopt(sfd,SOL_SOCKET,SO_SNDBUF,(ssval_t)&cursz,szcur))
+                 if (setsockopt(sfd,SOL_SOCKET,rsOpt,(ssval_t)&cursz,szcur))
                          maxwsz = cursz;
                     else minwsz = cursz;
                 }
@@ -306,6 +412,7 @@ int bbcp_Network::MaxWSize()
 // Close the socket and return the buffer size
 //
    close(sfd);
+   DEBUG("Max Window=" <<minwsz <<" MaxSeg=" <<maxSegment <<" AT=" <<ATune);
    return minwsz;
 }
 
@@ -324,29 +431,26 @@ int bbcp_Network::getWBSize(int xfd, int srwant)
 }
 
 /******************************************************************************/
-/*                             s e t W B S i z e                              */
+/*                                   Q o S                                    */
 /******************************************************************************/
   
-int bbcp_Network::setWBSize(const char *who, int xfd, int wbsz)
+int bbcp_Network::QoS(int newQoS)
 {
-   socklen_t szwb = (socklen_t)sizeof(wbsz);
-   int rc = 0; int wbsz2 = wbsz;
+   int oldQoS = netQoS;
+   if (newQoS >= 0) netQoS = newQoS;
+   return oldQoS;
+}
 
-   if (setsockopt(xfd, SOL_SOCKET, SO_SNDBUF, &wbsz, szwb))
-      {bbcp_Emsg(who, errno, "setting sndbuf size"); rc = -1;}
-   if (setsockopt(xfd, SOL_SOCKET, SO_RCVBUF, &wbsz2, szwb))
-      {bbcp_Emsg(who, errno, "setting rcvbuf size"); rc = -1;}
+/******************************************************************************/
+/*                             s e t W i n d o w                              */
+/******************************************************************************/
 
-   if DEBUGON
-      {int sndsz, rcvsz;
-       socklen_t szsr = (socklen_t)sizeof(sndsz);
-       if (getsockopt(xfd, SOL_SOCKET, SO_SNDBUF, &sndsz, &szsr))
-          sndsz = -errno;
-       if (getsockopt(xfd, SOL_SOCKET, SO_RCVBUF, &rcvsz, &szsr))
-          rcvsz = -errno;
-       DEBUG(who <<" window set to " <<wbsz <<" (actual snd=" <<sndsz <<" rcv=" <<rcvsz <<" seg=" <<maxSegment <<")");
-      }
-   return rc;
+int bbcp_Network::setWindow(int WSize, int noAT)
+{
+   Window = WSize;
+   if (noAT) ATune = 0;
+   DEBUG("Window set to " <<WSize <<" AT=" << ATune);
+   return Window;
 }
  
 /******************************************************************************/
@@ -372,7 +476,7 @@ int bbcp_Network::getHostAddr(char *hostname, struct sockaddr_in &InetAddr)
 // Try to resulve the name
 //
     if (hostname[0] > '9' || hostname[0] < '0')
-       GETHOSTBYNAME((const char *)hostname,&hent,hbuff,sizeof(hbuff),hp,&rc);
+       GETHOSTBYNAME(hostname,&hent,hbuff,sizeof(hbuff),hp,&rc);
        else if ((int)(addr = inet_addr(hostname)) == -1) errno = EINVAL;
                else {GETHOSTBYADDR((const char *)&addr,sizeof(addr),AF_INET,
                                    &hent, hbuff, sizeof(hbuff), hp, &rc);
@@ -451,35 +555,40 @@ int bbcp_Network::Retry(int retries, int rwait)
 /*                               s e t O p t s                                */
 /******************************************************************************/
 
-int bbcp_Network::setOpts(const char *who, int xfd, int wbsz)
+void bbcp_Network::setOpts(const char *who, int xfd)
 {
-   int one = 1, rc1, rc2, rc3, rc4, rc5;
-// struct linger liopts;
-// socklen_t szlio = (socklen_t)sizeof(liopts);
-   socklen_t szone = (socklen_t)sizeof(one);
+   int one = 1, wbsz;
+   static const socklen_t szone = (socklen_t)sizeof(one);
+   static const socklen_t szwb  = (socklen_t)sizeof(wbsz);
 
-   if (rc1 = setsockopt(xfd,SOL_SOCKET,SO_REUSEADDR,(ssval_t)&one,szone))
+   if (setsockopt(xfd,SOL_SOCKET,SO_REUSEADDR,(ssval_t)&one,szone))
       bbcp_Emsg(who, errno, "setting REUSEADDR");
 
-// SO_LINGER is busted on most systems, so don't bother setting it since it
-// will simply cause the close to delay much longer than necessary.
-//
-// liopts.l_onoff = 1; liopts.l_linger = 1;
-// if (rc2 = setsockopt(xfd,SOL_SOCKET,SO_LINGER,(ssval_t)&liopts,szlio))
-//    bbcp_Emsg(who, errno, "setting LINGER");
-
-   if (rc3=setsockopt(xfd,bbcp_Config.TCPprotid,TCP_NODELAY,(ssval_t)&one,szone))
+   if (setsockopt(xfd,protID,TCP_NODELAY,(ssval_t)&one,szone))
       bbcp_Emsg(who, errno, "setting NODELAY");
 
-   if (!bbcp_Config.NetQoS) rc4 = 0;
-      else if (rc4=setsockopt(xfd, IPPROTO_IP, IP_TOS,
-              (ssval_t)&bbcp_Config.NetQoS, sizeof(bbcp_Config.NetQoS)))
+   if (netQoS && setsockopt(xfd, IPPROTO_IP, IP_TOS,
+                           (ssval_t)&netQoS, sizeof(netQoS)))
       bbcp_Emsg(who, errno, "setting IP_TOS");
 
-   if (wbsz) rc5 = setWBSize(who, xfd, wbsz);
-      else   rc5 = 0;
+// Set the window if need be. If we are the sender, then reduce our window
+// by 20% to be kind and not over-run the receiver.
+//
+   if (ATune || !(wbsz = Window)) wbsz = -1;
+      else {if (Sender) wbsz = Window - (Window/5);
+            if (setsockopt(xfd, SOL_SOCKET, WinSOP, &wbsz, szwb))
+               bbcp_Emsg(who,errno,"setting",(Sender?"sndbuf":"rcvbuf","size"));
+           }
 
-   return rc1 |       rc3 | rc4 | rc5;
+// If debug is on, we verify that the window was set as we wanted
+//
+   if DEBUGON
+      {int xsz;
+       socklen_t szx = (socklen_t)sizeof(xsz);
+       if (getsockopt(xfd, SOL_SOCKET, WinSOP, &xsz, &szx)) xsz = -errno;
+       DEBUG(who <<(Sender ? " send" : " recv") <<" window set to " <<wbsz
+                 <<" (actual=" <<xsz <<")");
+      }
 }
   
 /******************************************************************************/

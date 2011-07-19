@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <netdb.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <strings.h>
 #include <stdio.h>
@@ -37,7 +38,6 @@
 #define  BBCP_IOMANIP
 #include "bbcp_Platform.h"
 #include "bbcp_Args.h"
-#include "bbcp_BuffPool.h"
 #include "bbcp_Config.h"
 #include "bbcp_Debug.h"
 #include "bbcp_Emsg.h"
@@ -65,8 +65,6 @@
 /******************************************************************************/
 /*                        G l o b a l   O b j e c t s                         */
 /******************************************************************************/
-
-extern bbcp_BuffPool  bbcp_BPool;
 
        bbcp_Config    bbcp_Config;
 
@@ -101,26 +99,24 @@ bbcp_Config::bbcp_Config()
    CopyOpts  = 0;
    LogSpec   = 0;
    RepSpec   = 0;
-   accwait   = 30000;
    bindtries = 1;
    bindwait  = 0;
    Options   = 0;
    Mode      = 0644;
+   BAdd      = 0;
    Bfact     = 0;
    BNum      = 0;
    Streams   = 4;
    Xrate     = 0;
    Complvl   = 1;
    Progint   = 0;
-   CXBsz     = 1024*1024;
+   RWBsz     = 0;
 // SrcXeq    = strdup("ssh -x -a -oFallBackToRsh=no -oServerAliveInterval=10 "
    SrcXeq    = strdup("ssh -x -a -oFallBackToRsh=no "
                       "%I -l %U %H bbcp");
 // SnkXeq    = strdup("ssh -x -a -oFallBackToRsh=no -oServerAliveInterval=10 "
    SnkXeq    = strdup("ssh -x -a -oFallBackToRsh=no "
                       "%I -l %U %H bbcp");
-   MinPort   = strdup("bbcpfirst");
-   MaxPort   = strdup("bbcplast");
    Logurl    = 0;
    Logfn     = 0;
    MLog      = 0;
@@ -130,19 +126,24 @@ bbcp_Config::bbcp_Config()
    MyProg    = 0;
    SecToken  = Rtoken();
    MaxSegSz  = bbcp_Net.MaxSSize();
-   Hsize     = bbcp_BPool.goodWSZ(0, 65536);
-   Wsize     = 65536+Hsize;
-   MaxWindow = -1;
+   Wsize     = 131072;
+   MaxWindow = 0;
    lastseqno = 0;
    SrcArg    = "SRC";
    SnkArg    = "SNK";
    CKPdir    = 0;
    IDfn      = 0;
-   TCPprotid = getProtID("tcp");
-   NetQoS    = 0;
    TimeLimit = 0;
    MTLevel   = 0;
    Jitter    = 0;
+   csOpts    = 0;
+   csSize    = 16;
+   csType    = bbcp_csMD5;
+   csSpec    = 0;
+  *csString  = 0;
+   csPath    = 0;
+   csFD      = -1;
+   ubSpec[0] = ' '; ubSpec[1] = ' '; ubSpec[2] = 0;
 }
 
 /******************************************************************************/
@@ -167,8 +168,6 @@ bbcp_Config::~bbcp_Config()
    if (SrcBuff)  free(SrcBuff);
    if (SrcXeq)   free(SrcXeq);
    if (SnkXeq)   free(SnkXeq);
-   if (MinPort)  free(MinPort);
-   if (MaxPort)  free(MaxPort);
    if (Logurl)   free(Logurl);
    if (Logfn)    free(Logfn);
    if (LogSpec)  free(LogSpec);
@@ -179,6 +178,7 @@ bbcp_Config::~bbcp_Config()
    if (MyUser)   free(MyUser);
    if (MyProg)   free(MyProg);
    if (CKPdir)   free(CKPdir);
+   if (csSpec)   free(csSpec);
 }
 /******************************************************************************/
 /*                             A r g u m e n t s                              */
@@ -186,10 +186,14 @@ bbcp_Config::~bbcp_Config()
 
 #define Add_Opt(x) {cbp[0]=' '; cbp[1]='-'; cbp[2]=x; cbp[3]='\0'; cbp+=3;}
 #define Add_Num(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1]);}
+#define Add_Nul(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"=%d");}
+#define Add_Nup(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"+%d");}
 #define Add_Oct(x) {cbp[0]=' '; cbp=n2a(x,&cbp[1],"%o");}
 #define Add_Str(x) {cbp[0]=' '; strcpy(&cbp[1], x); cbp+=strlen(x)+1;}
 
-#define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DefFhi:I:kl:L:m:nopP:q:rs:S:t:T:U:vVw:W:x:z"
+// Ranch version has below line instead of next line
+//#define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DeE:fFhi:I:kKl:L:m:noO:pP:q:rs:S:t:T:u:U:vVw:W:x:z"
+#define bbcp_VALIDOPTS (char *)"-a.B:b:C:c.d:DeE:fFhi:I:kKl:L:m:nopP:q:rs:S:t:T:u:U:vVw:W:x:z"
 #define bbcp_SSOPTIONS bbcp_VALIDOPTS "MH:Y:"
 
 #define Hmsg1(a)   {bbcp_Fmsg("Config", a);    help(1);}
@@ -200,10 +204,12 @@ bbcp_Config::~bbcp_Config()
 void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
 {
    bbcp_FileSpec *lfsp;
-   int retc, infiles = 0, notctl = 0, cxbsz = 0;
+   int n, retc, xTrace = 1, infiles = 0, notctl = 0, rwbsz = 0;
+   const char *exOP;
    char *inFN=0, c, cbhname[MAXHOSTNAMELEN+1];
    bbcp_Args arglist((char *)"bbcp: ");
-   int  tval, Uwindow= 0;
+   // Ranch version has below:
+   //   int  tval, Uwindow= 0;
 
 // Make sure we have at least one argument
 //
@@ -228,24 +234,22 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
                     }
                  break;
        case 'B': if (a2sz("window size", arglist.argval,
-                         tval, 1024, ((int)1)<<30))
+                         rwbsz, 1024, ((int)1)<<30))
                     Cleanup(1, argv[0], cfgfd);
-                 cxbsz = tval;
                  break;
-       case 'b': if (a2n("blocking factor",arglist.argval,tval,1,IOV_MAX)) 
-                    Cleanup(1, argv[0], cfgfd);
-                 Bfact = tval;
+       case 'b': retc = (*arglist.argval == '+'
+                      ? a2n("additional buff",arglist.argval,BAdd ,1,4096)
+                      : a2n("blocking factor",arglist.argval,Bfact,1,IOV_MAX));
+                 if (retc) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'c': if (arglist.argval)
-                    if (a2n("compression level",arglist.argval,tval,0,9))
-                       Cleanup(1, argv[0], cfgfd);
-                       else Complvl = tval;
-                    else Complvl = 1;
+                    {if (a2n("compression level",arglist.argval,Complvl,0,9))
+                        Cleanup(1, argv[0], cfgfd);
+                    } else Complvl = 1;
                  if (Complvl) Options |=  bbcp_COMPRESS;
                     else      Options &= ~bbcp_COMPRESS;
                  break;
-       case 'C': if (Configure((const char *)arglist.argval)) 
-                    Cleanup(1, argv[0], cfgfd);
+       case 'C': if (Configure(arglist.argval)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'd': if (SrcBuff) free(SrcBuff);
                  SrcBuff = strdup(arglist.argval);
@@ -257,7 +261,10 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
                  break;
        case 'D': Options |= bbcp_TRACE;
                  break;
-       case 'e': Options |= bbcp_MD5CHK;
+       case 'e': csOpts  |= bbcp_csDashE|bbcp_csLink;
+                 break;
+       case 'E': if (csSpec) free(csSpec);
+                 csSpec = strdup(arglist.argval);
                  break;
        case 'f': Options |= bbcp_FORCE;
                  break;
@@ -278,67 +285,69 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
                  break;
        case 'k': Options |= bbcp_KEEP | bbcp_ORDER;
                  break;
+       case 'K': Options |= bbcp_NOUNLINK;
+                 break;
        case 'l': if (Logfn) free(Logfn);
                  Logfn = strdup(arglist.argval);
                  break;
        case 'L': if (LogOpts(arglist.argval)) Cleanup(1, argv[0], cfgfd);
                  break;
-       case 'm': if (a2o("mode", arglist.argval, tval, 1, 07777)) 
+       case 'm': if (a2o("mode", arglist.argval, Mode, 1, 07777))
                     Cleanup(1, argv[0], cfgfd);
-                 Mode = tval;
                  break;
        case 'M': Options |= bbcp_OUTDIR;
                  break;
        case 'n': Options |= bbcp_NODNS;
                  break;
+		 // Ranch version has below -O option
+		 //       case 'O': if (a2n("milliseconds",arglist.argval,tval,30000,120000))
+		 //		   Cleanup(1, argv[0], cfgfd);
+		 //	            accwait = tval;
+		 //   	         break;
        case 'o': Options |= bbcp_ORDER;
                  break;
        case 'p': Options |= bbcp_PCOPY;
                  break;
-       case 'P': if (a2n("seconds",arglist.argval,tval,BBCP_MINPMONSEC,-1))
+       case 'P': if (a2n("seconds",arglist.argval,Progint,BBCP_MINPMONSEC,-1))
                     Cleanup(1, argv[0], cfgfd);
-                 Progint = tval;
                  break;
-       case 'q': if (a2n("qos",arglist.argval,tval,0, 255))
+       case 'q': if (a2n("qos",arglist.argval,n,0, 255))
                     Cleanup(1, argv[0], cfgfd);
-                 NetQoS = tval;
+                 bbcp_Net.QoS(n);
                  break;
        case 'r': Options |= bbcp_RECURSE;
                  break;
        case 's': if (a2n("streams", arglist.argval,
-                         tval,1, BBCP_MAXSTREAMS)) Cleanup(1, argv[0], cfgfd);
-                 Streams = tval;
+                         Streams,1,BBCP_MAXSTREAMS)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'S': if (SrcXeq) free(SrcXeq);
                  SrcXeq = strdup(arglist.argval);
                  break;
        case 't': if (a2sz("time limit", arglist.argval,
-                         tval, 1, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
-                 TimeLimit = tval;
+                         TimeLimit,1,((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'T': if (SnkXeq) free(SnkXeq);
                  SnkXeq = strdup(arglist.argval);
                  break;
        case 'v': Options |= bbcp_VERBOSE;
+                 if (xTrace < 2) xTrace = 2;
                  break;
-       case 'V': Options |= bbcp_BLAB;
+       case 'V': Options |= (bbcp_BLAB | bbcp_VERBOSE); xTrace = 3;
+                 break;
+       case 'u': if (Unbuff(arglist.argval)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'U': if (a2sz("forced window size", arglist.argval,
-                         tval, 1024, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
-                 Wsize = MaxWindow = tval;
-                 Uwindow = 1;
+                         Wsize, 8192, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
+                 MaxWindow = Wsize;
                  break;
-       case 'w': if (a2sz("window size", arglist.argval,
-                         tval, 1024, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
-                 Wsize = tval + Hsize;
-                 break;
-       case 'W': if (a2sz("window size", arglist.argval,
-                         tval, 1024, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
-                 Wsize = tval;
+       case 'W': // Backward compatibility
+       case 'w': if (*arglist.argval == '=')
+                    {Options |= bbcp_MANTUNE; arglist.argval++;}
+                 if (a2sz("window size", arglist.argval,
+                         Wsize, 8192, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'x': if (a2sz("transfer rate", arglist.argval,
-                         tval, 1024, ((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
-                 Xrate = tval;
+                         Xrate,1024,((int)1)<<30)) Cleanup(1, argv[0], cfgfd);
                  break;
        case 'Y': if (SecToken) free(SecToken);
                  SecToken = strdup(arglist.argval);
@@ -346,28 +355,51 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
        case 'z': Options |= bbcp_CON2SRC;
                  break;
        case '-': break;
-       default:  if (cfgfd < 0) help(255);
-                 Cleanup(1, argv[0], cfgfd);
+       default:  if (!notctl)
+                    {if (cfgfd < 0) help(255);
+                     Cleanup(1, argv[0], cfgfd);
+                    }
        }
      }
-
-// Set final option values
-//
-   if (cxbsz && cxbsz != CXBsz) CXBsz = cxbsz;
-      else cxbsz = 0;
-
-// Get maximum window size if not specified
-//
-   if (MaxWindow < 0) MaxWindow = WAdjust(bbcp_Net.MaxWSize()-Hsize);
 
 // If we were processing the configuration file, return
 //
    if (!notctl && cfgfd >= 0) return;
 
-// Check for mutually exclsuive options
+// If there is a checksum specification, process it now
 //
-   if ((Options & bbcp_APPEND) && (Options & bbcp_FORCE))
-      {bbcp_Fmsg("Config", "-a and -f are mutually exclusive.");
+   if (csSpec && EOpts(csSpec)) Cleanup(1, argv[0], cfgfd);
+
+// Enforce the order option if we need to compute checksum at the destination
+//
+   if ((csOpts & bbcp_csVerOut) || (Options & bbcp_COMPRESS))
+      Options |= bbcp_ORDER;
+
+// Check for options mutually exclsuive with '-a'
+//
+   if ((Options & bbcp_APPEND))
+      {     if (Options & bbcp_FORCE)    exOP = "-f";
+       else if (Options & bbcp_NOUNLINK) exOP = "-K";
+       else if (*csString)               exOP = "-E =";
+       else if (csOpts & bbcp_csPrint)   exOP = "-E =";
+       else                              exOP = 0;
+	if (exOP)
+       {bbcp_Fmsg("Config", "-a and", (char*)exOP, "are mutually exclusive.");
+           Cleanup(1, argv[0], cfgfd);
+          }
+      }
+
+// Check for options mutually exclusice with '-r'
+//
+   if ((Options & bbcp_RECURSE) && *csString)
+      {bbcp_Fmsg("Config", "'-E ...=' and -r are mutually exclusive.");
+           Cleanup(1, argv[0], cfgfd);
+      }
+
+// Check for options mutually exclusive with '-k'
+//
+   if ((Options & bbcp_KEEP) && (Options & bbcp_NOUNLINK))
+      {bbcp_Fmsg("Config", "-k and -K are mutually exclusive.");
        Cleanup(1, argv[0], cfgfd);
       }
 
@@ -377,7 +409,7 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
       {int infd;
        bbcp_Stream inStream;
        char *lp;
-       if ((infd = open((const char *)inFN, O_RDONLY)) < 0)
+       if ((infd = open(inFN, O_RDONLY)) < 0)
           {bbcp_Emsg("Config", errno, "opening", inFN); exit(2);}
        inStream.Attach(infd);
        while ((lp = inStream.GetLine()) && (*lp != '\0'))
@@ -431,83 +463,15 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
             lfsp->next = 0;
             srcLast = lfsp;
            }
-// Start up the logging if we need to
-//
-   if (Options & bbcp_LOGGING && notctl && !bbcp_NetLog.Open("bbcp", Logurl))
-      {bbcp_Fmsg("Config", "Unable to initialize netlogger.");
-       exit(4);
-      }
-
-// Check if we have exceeded memory limitations
-//
-   if (Options & (bbcp_SRC | bbcp_SNK))
-      {long long memreq;
-       BNum = (Streams > Bfact ? Streams : Bfact) * 2 + Streams;
-       memreq = Wsize * BNum + (Options & bbcp_COMPRESS ? Bfact * CXBsz : 0);
-       if (memreq > bbcp_OS.FreeRAM/4)
-          {char mbuff[80];
-           sprintf(mbuff, "I/O buffers (%" FMTLL "dK) > 25%% of available free memory (%" FMTLL "dK);",
-                          memreq/1024, bbcp_OS.FreeRAM/1024);
-           bbcp_Fmsg("Config", (Options & bbcp_SRC ? "Source" : "Sink"), mbuff,
-                               (char *)"copy may be slow");
-          }
-       if (Wsize < MaxWindow) MaxWindow = Wsize;
-          else if (Wsize > MaxWindow) 
-                  {Wsize = MaxWindow;
-                   if (Options & (bbcp_BLAB | bbcp_VERBOSE)
-                   &&  Options & bbcp_SRC) WAMsg("Config", "reduced", Wsize);
-                  }
-       }  else Wsize = WAdjust(Wsize, "Config", 
-                               Options & (bbcp_BLAB | bbcp_VERBOSE));
-
-// Assemble the final options
-//
-   if (!notctl)
-  {
-   char cbuff[4096], *cbp = cbuff;
-   if (Options & bbcp_APPEND)    Add_Opt('a');
-   if (CKPdir)                                 Add_Str(CKPdir);
-   if (Bfact)                   {Add_Opt('b'); Add_Num(Bfact);}
-   if (Options & bbcp_COMPRESS) {Add_Opt('c'); Add_Num(Complvl);
-                                 if (cxbsz) {Add_Opt('B'); Add_Num(cxbsz);}
-                                }
-   if (SrcBase)                 {Add_Opt('d'); Add_Str(SrcBase);}
-   if (Options & bbcp_TRACE)     Add_Opt('D');
-   if (Options & bbcp_FORCE)     Add_Opt('f');
-   if (Options & bbcp_NOSPCHK)   Add_Opt('F');
-   if (Options & bbcp_KEEP)      Add_Opt('k');
-   if (LogSpec)                 {Add_Opt('L'); Add_Str(LogSpec);}
-                                 Add_Opt('m'); Add_Oct(Mode);
-   if (Options & bbcp_OUTDIR || (Options & bbcp_RELATIVE && SrcBase))
-                                 Add_Opt('M');
-// if (Options & bbcp_NODNS)     Add_Opt('n');
-   if (Options & bbcp_ORDER)     Add_Opt('o');
-   if (Options & bbcp_PCOPY)     Add_Opt('p');
-   if (Progint)                 {Add_Opt('P'); Add_Num(Progint);}
-   if (NetQoS)                  {Add_Opt('q'); Add_Num(NetQoS); }
-   if (Options & bbcp_RECURSE)   Add_Opt('r');
-   if (Streams)                 {Add_Opt('s'); Add_Num(Streams);}
-   if (TimeLimit)               {Add_Opt('t'); Add_Num(TimeLimit);}
-   if (Options & bbcp_VERBOSE)   Add_Opt('v');
-   if (Options & bbcp_BLAB)      Add_Opt('V');
-   if (Uwindow)                 {Add_Opt('U'); Add_Num(MaxWindow);}
-   else
-   if (Wsize)                   {Add_Opt('W'); Add_Num(Wsize);}
-                                 Add_Opt('Y'); Add_Str(SecToken);
-   if (Xrate)                   {Add_Opt('x'); Add_Num(Xrate);}
-   if (Options & bbcp_CON2SRC)   Add_Opt('z');
-   CopyOpts = strdup(cbuff);
-  }
-   if (!Bfact)
-      if (Options & bbcp_COMPRESS) Bfact = 3;
-         else Bfact = (Streams > IOV_MAX ? IOV_MAX : Streams);
 
 // Set appropriate debugging level
 //
-   if (Options & bbcp_TRACE)
-      if (Options & bbcp_BLAB) bbcp_Debug.Trace = 3;
-         else if (Options & bbcp_VERBOSE) bbcp_Debug.Trace = 2;
-                 else bbcp_Debug.Trace = 1;
+   if (Options & bbcp_TRACE) bbcp_Debug.Trace = xTrace;
+
+// Do Source/Sink configuration or assemble the final options
+//
+   if (notctl) Config_Xeq(rwbsz);
+      else     Config_Ctl(rwbsz);
 
 // Set checkpoint directory if we do not have one here and must have one
 //
@@ -516,7 +480,7 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
        char *homedir = bbcp_OS.getHomeDir();
        CKPdir = (char *)malloc(strlen(homedir) + sizeof(ckpsfx) + 1);
        strcpy(CKPdir, homedir); strcat(CKPdir, ckpsfx);
-       if (mkdir((const char *)CKPdir, 0644) && errno != EEXIST)
+       if (mkdir(CKPdir, 0644) && errno != EEXIST)
           {bbcp_Emsg("Config",errno,"creating restart directory",CKPdir);
            exit(100);
           }
@@ -546,56 +510,60 @@ void bbcp_Config::Arguments(int argc, char **argv, int cfgfd)
 void bbcp_Config::help(int rc)
 {
 H("Usage:   bbcp [Options] [Inspec] Outspec")
-I("Options: [-a [dir]] [-b bf] [-B bsz] [-c [lvl]] [-C cfn] [-D] [-d path] [-e]")
-H("         [-f] [-F] [-h] [-i fn] [-I fn] [-k] [-L opts[@logurl]] [-m mode] [-p]")
-H("         [-P sec] [-r] [-q qos] [-s snum] [-S srcxeq] [-T trgxeq] [-t sec]")
-H("         [-v] [-V] [-U wsz] [-w wsz] [-W wsz] [-x rate] [-z] [--]")
+I("Options: [-a [dir]] [-b [+]bf] [-B bsz] [-c [lvl]] [-C cfn] [-D] [-d path]")
+H("         [-e] [-E csa] [-f] [-F] [-h] [-i idfn] [-I slfn] [-k] [-K]")
+H("         [-L opts[@logurl]] [-l logf] [-m mode] [-p] [-P sec] [-r] [-q qos]")
+H("         [-s snum] [-S srcxeq] [-T trgxeq] [-t sec] [-v] [-V] [-u loc]")
+H("         [-U wsz] [-w [=]wsz] [-x rate] [-z] [--]")
 I("I/Ospec: [user@][host:]file")
 if (rc) exit(rc);
 I("Function: Secure and fast copy utility.")
 I("-a dir  append mode to restart a previously failed copy.")
 H("-b bf   sets the read blocking factor (default is 1).")
-H("-B bsz  sets the read/write compression I/O buffer size (default is 1M).")
+H("-b +bf  adds additional output buffers to mitigate ordering stalls.")
+H("-B bsz  sets the read/write I/O buffer size (default is wsz).")
 H("-c lvl  compress data before sending across the network (default lvl is 1).")
 H("-C cfn  process the named configuration file at time of encounter.")
 H("-d path requests relative source path addressing and target path creation.")
 H("-D      turns on debugging.")
-H("-e      error check the data using md5 checksums.")
+H("-e      error check data for transmission errors using md5 checksum.")
+H("-E csa  specify checksum alorithm and optionally report or verify checksum.")
+H("        csa: [%]{a32|c32|md5}[=[<value> | <outfile>]]")
 H("-f      forces the copy by first unlinking the target file before copying.")
 H("-F      does not check to see if there is enough space on the target node.")
 H("-h      print help information.")
-H("-i fn   is the name of the ssh identify file for source and target.")
-H("-I fn   is the name of the file that holds the list of files to be copied.")
+H("-i idfn is the name of the ssh identify file for source and target.")
+H("-I slfn is the name of the file that holds the list of files to be copied.")
+H("        With -I no source files need be specified on the command line.")
 H("-k      keep the destination file even when the copy fails.")
-H("-l      logs standard error to the specified file.")
+H("-K      do not rm the file when -f specified, only truncate it.")
+H("-l logf logs standard error to the specified file.")
 H("-L args sets the logginng level and log message destination.")
 H("-m mode target file mode (default is 0644 or comes via -p option).")
 H("-s snum number of network streams to use (default is 4).")
 H("-p      preserve source mode, ownership, and dates.")
-H("-P sec  produce a progress message every sec seconds.")
+H("-P sec  produce a progress message every sec seconds (15 sec minimum).")
 H("-q lvl  specifies the quality of service for routers that support QOS.")
-H("-r      copy subdirectories and their contents.")
+H("-r      copy subdirectories and their contents (actual files only).")
 H("-S cmd  command to start bbcp on the source node.")
 H("-T cmd  command to start bbcp on the target node.")
 H("-t sec  sets the time limit for the copy to complete.")
 H("-v      verbose mode (provides per file transfer rate).")
 H("-V      very verbose mode (excruciating detail).")
+H("-u loc  use unbuffered I/O at source or target, if possible.")
+H("        loc: s | t | st")
 H("-U wsz  unnegotiated window size (sets maximum and default for all parties).")
-H("-w wsz  window size for transmission (the default is 64K).")
-H("-w wsz  same as -w but uses the precise value even when non-optimum.")
+H("-w wsz  desired window size for transmission (the default is 128K).")
+H("        Prefixing wsz with '=' disables autotuning in favor of a fixed wsz.")
 H("-x rate is the maximum transfer rate allowed in bytes, K, M, or G.")
-H("-z      use reverse connection protocol (i.e., sink to source).")
+H("-z      use reverse connection protocol (i.e., target to source).")
 H("--      allows an option with a defaulted optional arg to appear last.")
 I("user    the user under which the copy is to be performed. The default is")
 H("        to use the current login name.")
 H("host    the location of the file. The default is to use the current host.")
-H("file    the name of the source file, or target file or directory.")
-I("Note 1. If -i is specified, no source files need be specified on the command")
-H("        line. At least one source file must be specified in some way.")
-I("     2. The -a and -f options are mutually exclusive.")
-I("     3. The smallest progress value allowed is 15 seconds.")
-I("     4. By default, -b (blocking) is set to equal the -s (streams) value.")
-I("     5. " <<bbcp_Version.Version)
+H("Inspec  the name of the source file(s) (also see -I).")
+H("Outspec the name of the target file or directory (required if >1 input file).")
+I(bbcp_Version.Version)
 exit(rc);
 }
   
@@ -628,7 +596,7 @@ int bbcp_Config::ConfigInit(int argc, char **argv)
 // Use the config file, if present
 //
    if (ConfigFN = getenv("bbcp_CONFIGFN"))
-      {if (retc = Configure((const char *)ConfigFN)) return retc;}
+      {if (retc = Configure(ConfigFN)) return retc;}
       else {
       // Use configuration file in the home directory, if any
       //
@@ -636,9 +604,9 @@ int bbcp_Config::ConfigInit(int argc, char **argv)
       homedir = bbcp_OS.getHomeDir();
       ConfigFN = (char *)malloc(strlen(homedir) + strlen(cfn) + 1);
       strcpy(ConfigFN, homedir); strcat(ConfigFN, cfn);
-      if (stat((const char *)ConfigFN, &buf)) 
+      if (stat(ConfigFN, &buf))
          {retc = 0; free(ConfigFN); ConfigFN = 0;}
-         else if (retc = Configure((const char *)ConfigFN)) return retc;
+         else if (retc = Configure(ConfigFN)) return retc;
      }
 
 // Establish the FD limit
@@ -651,6 +619,13 @@ int bbcp_Config::ConfigInit(int argc, char **argv)
                  bbcp_Emsg("config", errno, "setting FD limit");
             }
    }
+
+// Ignore sigpipe
+//
+   signal(SIGPIPE, SIG_IGN);
+
+// All done
+//
    return retc;
 }
   
@@ -678,7 +653,7 @@ int bbcp_Config::Configure(const char *cfgFN)
 // Try to open the configuration file.
 //
    if ( (cfgFD = open(cfgFN, O_RDONLY, 0)) < 0)
-      return bbcp_Emsg("Config",errno,"opening config file",(char *)cfgFN);
+      return bbcp_Emsg("Config",errno,"opening config file",cfgFN);
 
 // Process the arguments from the config file
 //
@@ -695,8 +670,9 @@ void bbcp_Config::Display()
 
 // Display the option values (used during debugging)
 //
-   cerr <<"accwait " <<accwait <<endl;
+   cerr <<"badd " <<BAdd <<endl;
    cerr <<"bfact " <<Bfact <<endl;
+   cerr <<"bsize " <<RWBsz <<endl;
    cerr <<"bindtries " <<bindtries <<" bindwait " <<bindwait <<endl;
    if (CBhost)
    cerr <<"cbhost:port " <<CBhost <<":" <<CBport <<endl;
@@ -710,7 +686,6 @@ void bbcp_Config::Display()
    cerr <<"idfn " <<IDfn <<endl;
    if (Logfn)
    cerr <<"logfn " <<Logfn <<endl;
-   cerr <<"min/maxport " <<MinPort <<" / " <<MaxPort <<endl;
    cerr <<"mode " <<oct <<Mode <<dec <<endl;
    cerr <<"myhost " <<MyHost <<endl;
    cerr <<"myuser " <<MyUser <<endl;
@@ -722,25 +697,24 @@ void bbcp_Config::Display()
    if (Xrate)
    cerr <<"xfr " <<Xrate <<endl;
 }
-  
+
 /******************************************************************************/
-/*                               W A d j u s t                                */
+/*                                 S c a l e                                  */
 /******************************************************************************/
-  
-int bbcp_Config::WAdjust(int mywsize, const char *who, int blab)
+
+const char *bbcp_Config::Scale(double &xVal)
 {
-    int wmult, newsz;
-    char buff[64];
+    static const double Kilo = 1024.0;
 
-    if (mywsize > 131072) wmult = 65536;
-       else if (mywsize > 65536) wmult = 32768;
-               else if (mywsize > 32768) wmult = 16384;
-                       else if (mywsize > 16384) wmult = 8192;
-                               else return mywsize;
-   if ((newsz = mywsize / wmult * wmult + Hsize) != mywsize && blab)
-      WAMsg(who, "adjusted", newsz);
-
-   return newsz;
+    if (xVal < Kilo) return "";
+    xVal /= Kilo;
+    if (xVal < Kilo) return "K";
+    xVal /= Kilo;
+    if (xVal < Kilo) return "M";
+    xVal /= Kilo;
+    if (xVal < Kilo) return "G";
+    xVal /= Kilo;
+    if (xVal < Kilo) return "T";
 }
  
 /******************************************************************************/
@@ -750,13 +724,133 @@ int bbcp_Config::WAdjust(int mywsize, const char *who, int blab)
 void bbcp_Config::WAMsg(const char *who, const char *act, int newsz)
 {
     char buff[128];
-    sprintf(buff, "%s to %d", act, newsz);
-    bbcp_Fmsg(who, "Window size", buff, (char *)"bytes.");
+    sprintf(buff, "to %d", newsz);
+    bbcp_Fmsg(who, act, buff, "bytes.");
 }
 
 /******************************************************************************/
 /*                     p r i v a t e   f u n c t i o n s                      */
 /******************************************************************************/
+/******************************************************************************/
+/*                            C o n f i g _ C t l                             */
+/******************************************************************************/
+
+void bbcp_Config::Config_Ctl(int rwbsz)
+{
+   char cbuff[4096], *cbp = cbuff;
+   int n;
+
+// If a checksum output file exists, open it now
+//
+   if (csPath)
+      {if ((csFD = open(csPath, O_CREAT|O_APPEND|O_WRONLY, 0644)) < 0)
+          {bbcp_Emsg("Config", errno, "opening checksum file", csPath);
+           exit(2);
+          }
+      }
+
+// Now generate all the options we will send to the source and sink
+//
+   if (Options & bbcp_APPEND)    Add_Opt('a');
+   if (CKPdir)                                 Add_Str(CKPdir);
+   if (BAdd)                    {Add_Opt('b'); Add_Nup(BAdd);}
+   if (Bfact)                   {Add_Opt('b'); Add_Num(Bfact);}
+   if (rwbsz)                   {Add_Opt('B'); Add_Num(rwbsz);}
+   if (Options & bbcp_COMPRESS) {Add_Opt('c'); Add_Num(Complvl);}
+   if (SrcBase)                 {Add_Opt('d'); Add_Str(SrcBase);}
+   if (Options & bbcp_TRACE)     Add_Opt('D');
+   if (csOpts  & bbcp_csDashE)   Add_Opt('e');
+   if (Options & bbcp_FORCE)     Add_Opt('f');
+   if (Options & bbcp_NOSPCHK)   Add_Opt('F');
+   if (Options & bbcp_KEEP)      Add_Opt('k');
+   if (LogSpec)                 {Add_Opt('L'); Add_Str(LogSpec);}
+                                 Add_Opt('m'); Add_Oct(Mode);
+   if (Options & bbcp_OUTDIR || (Options & bbcp_RELATIVE && SrcBase))
+                                 Add_Opt('M');
+// if (Options & bbcp_NODNS)     Add_Opt('n');
+   if (Options & bbcp_ORDER)     Add_Opt('o');
+   if (Options & bbcp_PCOPY)     Add_Opt('p');
+   if (Progint)                 {Add_Opt('P'); Add_Num(Progint);}
+   if ((n = bbcp_Net.QoS()))    {Add_Opt('q'); Add_Num(n); }
+   if (Options & bbcp_RECURSE)   Add_Opt('r');
+   if (Streams)                 {Add_Opt('s'); Add_Num(Streams);}
+   if (TimeLimit)               {Add_Opt('t'); Add_Num(TimeLimit);}
+   if (Options & bbcp_VERBOSE)   Add_Opt('v');
+   if (Options & bbcp_BLAB)      Add_Opt('V');
+   if (MaxWindow)               {Add_Opt('U'); Add_Num(MaxWindow);}
+   else
+   if (Wsize)                   {Add_Opt('W');
+                                 if (Options & bbcp_MANTUNE) {Add_Nul(Wsize);}
+                                    else      {Add_Num(Wsize);}
+                                }
+                                 Add_Opt('Y'); Add_Str(SecToken);
+   if (Xrate)                   {Add_Opt('x'); Add_Num(Xrate);}
+   if (Options & bbcp_CON2SRC)   Add_Opt('z');
+   CopyOptt = cbuff - cbp;
+   if (csSpec)                  {Add_Opt('E'); Add_Str(csSpec);}
+   if (Options & (bbcp_IDIO | bbcp_ODIO))
+                                {Add_Opt('u'); Add_Str(ubSpec);}
+   CopyOpts = strdup(cbuff);
+}
+  
+/******************************************************************************/
+/*                            C o n f i g _ X e q                             */
+/******************************************************************************/
+
+void bbcp_Config::Config_Xeq(int rwbsz)
+{
+   long long memreq;
+
+// Set network flow. This is indepedent of connection direction.
+//
+   bbcp_Net.Flow(Options & bbcp_SRC);
+
+// Start up the logging if we need to
+//
+   if (Options & bbcp_LOGGING && !bbcp_NetLog.Open("bbcp", Logurl))
+      {bbcp_Fmsg("Config", "Unable to initialize netlogger.");
+       exit(4);
+      }
+
+// Get maximum window size if not specified
+//
+   if (!MaxWindow) MaxWindow = bbcp_Net.MaxWSize(Options & bbcp_SNK);
+
+// Do penultimate adjustement to the window size
+//
+   if (Wsize > MaxWindow)
+      {Wsize = MaxWindow;
+       if (Options & bbcp_BLAB && Options & bbcp_SRC)
+          WAMsg("Config", "Window size reduced", Wsize);
+      }
+   bbcp_Net.setWindow(Wsize, Options & bbcp_MANTUNE);
+
+// Set the initial I/O buffer size
+//
+   setRWB(rwbsz);
+
+// Set the blocking factor to one (direct forced) if it has not been specified
+//
+   if (!Bfact || (Options & bbcp_IDIO)) Bfact = 1;
+
+// Compute the number of buffers we will obtain
+//
+   if (Options & bbcp_SRC) BNum = (Streams > Bfact ? Streams : Bfact)*3;
+      else BNum = (Streams > Bfact ? Streams : Bfact)*3
+                + (Options & bbcp_ORDER ? Streams*3 : 0) + BAdd;
+
+// Check if we have exceeded memory limitations
+//
+   memreq = RWBsz * BNum + (Options & bbcp_COMPRESS ? Bfact * RWBsz : 0);
+   if (memreq > bbcp_OS.FreeRAM/4)
+      {char mbuff[80];
+       sprintf(mbuff, "I/O buffers (%" FMTLL "dK) > 25%% of available free memory (%" FMTLL "dK);",
+                      memreq/1024, bbcp_OS.FreeRAM/1024);
+       bbcp_Fmsg("Config", (Options & bbcp_SRC ? "Source" : "Sink"), mbuff,
+                           "copy may be slow");
+      }
+}
+  
 /******************************************************************************/
 /*                                R t o k e n                                 */
 /******************************************************************************/
@@ -794,7 +888,7 @@ int bbcp_Config::a2sz(const char *etxt, char *item, int  &result,
     val  = strtol(item, &endC, 10) * qmult;
     if (*endC || (maxv != -1 && (val > maxv || val < 1)) || val < minv)
        {if (qmult > 1) item[i] = cmult;
-        return bbcp_Fmsg("Config", "Invalid", (char *)etxt, (char *)" - ",item);
+        return bbcp_Fmsg("Config", "Invalid", etxt, "-",item);
        }
     if (qmult > 1) item[i] = cmult;
     result = val;
@@ -813,7 +907,7 @@ int bbcp_Config::a2tm(const char *etxt, char *item, int  &result,
     val  = strtol(item, &endC, 10) * qmult;
     if (*endC || (maxv != -1 && (val > maxv || val < 1)) || val < minv)
        {if (qmult > 1) item[i] = cmult;
-        return bbcp_Fmsg("Config", "Invalid", (char *)etxt, (char *)" - ",item);
+        return bbcp_Fmsg("Config", "Invalid", etxt, "-",item);
        }
     if (qmult > 1) item[i] = cmult;
     result = val;
@@ -826,7 +920,7 @@ int bbcp_Config::a2ll(const char *etxt, char *item, long long &result,
     char *endC;
     val  = strtoll(item, &endC, 10);
     if (*endC || (maxv != -1 && val > maxv) || val  < minv)
-       return bbcp_Fmsg("Config", "Invalid", (char *)etxt, (char *)" - ", item);
+       return bbcp_Fmsg("Config", "Invalid", etxt, "-", item);
     result = val;
     return 0;
 }
@@ -837,7 +931,7 @@ int bbcp_Config::a2n(const char *etxt, char *item, int  &result,
     char *endC;
     val  = strtol(item, &endC, 10);
     if (*endC || (maxv != -1 && val > maxv) || val  < minv)
-       return bbcp_Fmsg("Config", "Invalid", (char *)etxt, (char *)" - ", item);
+       return bbcp_Fmsg("Config", "Invalid", etxt, "-", item);
     result = val;
     return 0;
 }
@@ -848,8 +942,22 @@ int bbcp_Config::a2o(const char *etxt, char *item, int  &result,
     char *endC;
     val  = strtol(item, &endC, 8);
     if (*endC || (maxv != -1 && val > maxv) || val < minv)
-       return bbcp_Fmsg("Config", "Invalid", (char *)etxt, (char *)" - ", item);
+       return bbcp_Fmsg("Config", "Invalid", etxt, "-", item);
     result = val;
+    return 0;
+}
+
+int bbcp_Config::a2x(char *result, char *item, int ilen)
+{   int  xVal, i, j = 0;
+
+    for (i = 0; i < ilen; i++)
+        {if (isdigit(item[i])) xVal = item[i] - int('0');
+            else if (item[i] >= 'a' && item[i] <= 'f')
+                    xVal = item[i] - int('a') + 10;
+                    else return 1;
+         if (i & 0x01) result[j++] |= xVal;
+            else result[j] = xVal << 4;
+        }
     return 0;
 }
 
@@ -862,7 +970,6 @@ char *bbcp_Config::n2a(int  val, char *buff, const char *fmt)
 
 char *bbcp_Config::n2a(long long  val, char *buff, const char *fmt)
       {return buff + sprintf(buff, fmt, val);}
- 
 /******************************************************************************/
 /*                               P a r s e S B                                */
 /******************************************************************************/
@@ -891,17 +998,78 @@ void bbcp_Config::ParseSB()
 }
   
 /******************************************************************************/
-/*                             g e t P r o t I D                              */
+/*                                 E O p t s                                  */
 /******************************************************************************/
-
-int bbcp_Config::getProtID(const char *pname)
-{
-    struct protoent *pp;
-
-    if (!(pp = getprotobyname(pname))) return BBCP_IPPROTO_TCP;
-       else return pp->p_proto;
-}
   
+int bbcp_Config::EOpts(char *opts)
+{
+   int csLen, csPrt = 0, csSrc = 0;
+   char *Equal, *csArg = 0;
+
+// Reset the checksum option area
+//
+   csFD = -1; *csString = 0;
+   if (csPath) {free(csPath); csPath = 0;}
+
+// If the type starts with a dot then source computation is indicated
+//
+   if (*opts == '%')
+      {csSrc = 1; opts++;
+       if (!(*opts))
+          {bbcp_Fmsg("Config", "Checksum type not specified."); return -1;}
+      }
+
+// Find the equals and see what follows
+//
+   if ((Equal = index(opts, '=')))
+      {*Equal = 0; csArg = Equal+1;
+       if (!isxdigit(*csArg))
+          {if (*csArg) csPath = strdup(csArg); csPrt = 1; csArg = 0;}
+      } else csOpts = bbcp_csDashE|bbcp_csLink;
+
+// Verify that this is a supported checksum
+//
+   csLen = strlen(opts);
+   if (csLen >= (int)sizeof(csName)) *csName = 0;
+      else strcpy(csName, opts);
+        if (!strcmp("a32", csName)) {csType = bbcp_csA32; csSize =  4;}
+   else if (!strcmp("c32", csName)) {csType = bbcp_csC32; csSize =  4;}
+   else if (!strcmp("md5", csName)) {csType = bbcp_csMD5; csSize = 16;}
+   else {bbcp_Fmsg("Config", "Invalid checksum type -", opts); return -1;}
+
+// Verify the checksum value if one was actually specified
+//
+   if (csArg)
+      {csLen = strlen(csArg);
+       if (csSize*2 != csLen || a2x(csValue, csArg, csLen))
+          {bbcp_Fmsg("Config","Invalid",csName,"checksum value -",csArg);
+           return -1;
+          }
+       strcpy(csString, csArg);
+      }
+
+// Indicate where the checksum generation will occur
+//
+   if (Equal)
+      {if (csOpts & bbcp_csLink)
+          if (Options & bbcp_ORDER || !csSrc)
+                                    csOpts  =  bbcp_csVerAll|bbcp_csDashE;
+             else                   csOpts |=  bbcp_csVerIn;
+          else if (csSrc)           csOpts  =  bbcp_csVerIn;
+                  else              csOpts  =  bbcp_csVerOut;
+      }
+
+// Establish print and echo options
+//
+   if (csPrt)
+      csOpts |= bbcp_csPrint | (csOpts & bbcp_csVerOut ? 0 : bbcp_csSend);
+
+// All done
+//
+   if (Equal) *Equal = '=';
+   return 0;
+}
+
 /******************************************************************************/
 /*                               L o g O p t s                                */
 /******************************************************************************/
@@ -954,11 +1122,11 @@ int bbcp_Config::HostAndPort(const char *what, char *path, char *buff, int bsz)
  //
     while (*hn && *hn != ':') hn++;
     if (!(hlen = hn - path))
-       {bbcp_Fmsg("Config", what, (char *)"host not specified in", path); 
+       {bbcp_Fmsg("Config", what, "host not specified in", path);
         return -1;
        }
     if (hlen >= bsz)
-       {bbcp_Fmsg("Config", what, (char *)"hostname too long in", path);
+       {bbcp_Fmsg("Config", what, "hostname too long in", path);
         return -1;
        }
     if (path != buff) strncpy(buff, path, hlen);
@@ -967,15 +1135,47 @@ int bbcp_Config::HostAndPort(const char *what, char *path, char *buff, int bsz)
  //
     if (*hn == ':' && hn++ && *hn)
        {errno = 0;
-        pnum = strtol((const char *)hn, (char **)NULL, 10);
+        pnum = strtol(hn, (char **)NULL, 10);
         if (!pnum && errno || pnum > 65535)
-           {bbcp_Fmsg("Config",what,(char *)"port invalid -", hn); return -1;}
+           {bbcp_Fmsg("Config",what,"port invalid -", hn); return -1;}
        }
 
 // All done.
 //
     buff[hlen] = '\0';
     return pnum;
+}
+ 
+/******************************************************************************/
+/*                                 s e t C S                                  */
+/******************************************************************************/
+  
+void bbcp_Config::setCS(char *inCS)
+{
+// Set checksum
+//
+   memcpy(csValue,inCS,csSize);
+   tohex(inCS,csSize,csString);
+}
+  
+/******************************************************************************/
+/*                                s e t R W B                                 */
+/******************************************************************************/
+
+void bbcp_Config::setRWB(int rwbsz)
+{
+   static const int MaxRWB = 524288;
+   static const int xyzRWB = 418816;
+
+// Now compute the possible R/W buffer size
+//
+   if (rwbsz) RWBsz = rwbsz;
+      else RWBsz = (Wsize > xyzRWB ? MaxRWB : Wsize + Wsize/4);
+   RWBsz = (RWBsz < bbcp_OS.PageSize ? bbcp_OS.PageSize
+                                     : RWBsz/bbcp_OS.PageSize*bbcp_OS.PageSize);
+
+   if (rwbsz && RWBsz != rwbsz && (Options & bbcp_BLAB))
+      WAMsg("Config", "Buffer size changed", RWBsz);
 }
 
 /******************************************************************************/
@@ -984,7 +1184,7 @@ int bbcp_Config::HostAndPort(const char *what, char *path, char *buff, int bsz)
 
 char *bbcp_Config::tohex(char *inbuff, int inlen, char *outbuff) {
      static char hv[] = "0123456789abcdef";
-     unsigned int hnum, i, j = 0;
+     int i, j = 0;
      for (i = 0; i < inlen; i++) {
          outbuff[j++] = hv[(inbuff[i] >> 4) & 0x0f];
          outbuff[j++] = hv[ inbuff[i]       & 0x0f];
@@ -993,11 +1193,36 @@ char *bbcp_Config::tohex(char *inbuff, int inlen, char *outbuff) {
      return outbuff;
      }
 
+/******************************************************************************/
+/*                                U n b u f f                                 */
+/******************************************************************************/
+  
+int bbcp_Config::Unbuff(char *opts)
+{
+    char *opt = opts;
+    int myopts = 0, nlopts = 0;
+
+    while(*opt)
+         {switch(*opt)
+                {case 't': Options |= bbcp_ODIO; ubSpec[0] = 't'; break;
+                 case 's': Options |= bbcp_IDIO; ubSpec[1] = 's'; break;
+                 default:  bbcp_Fmsg("Config","Invalid unbuffered options -",opts);
+                           return -1;
+                }
+          opt++;
+         }
+    return 0;
+}
+  
+/******************************************************************************/
+/*                               C l e a n u p                                */
+/******************************************************************************/
+  
 void bbcp_Config::Cleanup(int rc, char *cfgfn, int cfgfd)
 {
 if (cfgfd >= 0 && cfgfn)
    if (rc > 1)
-        bbcp_Fmsg("Config","Check config file",cfgfn,(char *)"for conflicts.");
+        bbcp_Fmsg("Config","Check config file",cfgfn,"for conflicts.");
    else bbcp_Fmsg("Config", "Error occured processing config file", cfgfn);
 exit(rc);
 }

@@ -15,13 +15,12 @@
  * will fill a supplied 16-byte array with the digest.
  */
 #include <string.h>		/* for memcpy() */
+#include "bbcp_Endian.h"
 #include "bbcp_MD5.h"
 
-#ifndef HIGHFIRST
-#define byteReverse(buf, len)	/* Nothing */
+#ifndef BBCP_BIG_ENDIAN
+void bbcp_MD5::byteReverse(unsigned char *buf, unsigned longs) {} /* Nothing */
 #else
-void bbcp_MD5::byteReverse(unsigned char *buf, unsigned longs);
-
 #ifndef ASM_MD5
 /*
  * Note: this code is harmless on little-endian machines.
@@ -144,7 +143,7 @@ void bbcp_MD5::MD5Final(unsigned char digest[16], struct MD5Context *ctx)
     MD5Transform(ctx->buf, (uint32 *) ctx->in);
     byteReverse((unsigned char *) ctx->buf, 4);
     memcpy(digest, ctx->buf, 16);
-    memset(ctx, 0, sizeof(ctx));	/* In case it's sensitive */
+//  memset(ctx, 0, sizeof(ctx));	/* In case it's sensitive */
 }
 
 #ifndef ASM_MD5

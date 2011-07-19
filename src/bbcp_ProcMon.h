@@ -27,8 +27,8 @@ void  Start(int seclim, bbcp_BuffPool *);
 
 void  Stop();
 
-      bbcp_ProcMon() {mytid = 0; alldone = TimeLimit = 0; MonPool = 0;}
-
+      bbcp_ProcMon() : MonPool(0),mytid(0),alldone(0),TimeLimit(0),monDone(0)
+                     {}
      ~bbcp_ProcMon() {Stop();}
 
 bbcp_BuffPool *MonPool;
@@ -40,5 +40,6 @@ int            alldone;
 int            TimeLimit;
 pid_t          monPID;
 bbcp_CondVar   CondMon;
+bbcp_Semaphore monDone;
 };
 #endif

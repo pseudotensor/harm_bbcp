@@ -47,6 +47,11 @@ void bbcp_ProcMon::Limit()
       {MonPool->Abort();
        bbcp_Fmsg("Limit", "Time limit exceeded");
       }
+
+// Post the semaphore to indicate we are done. This is a far safer way to
+// synchronize exits than using pthread_join().
+//
+   monDone.Post();
 }
 
 /******************************************************************************/
@@ -55,20 +60,25 @@ void bbcp_ProcMon::Limit()
   
 void bbcp_ProcMon::Monitor()
 {
-   int   pdone = 0, wtime = 5;
+   static const int wtime = 5;
+
+// Allow immediate cancellations to avoid hang-ups
+//
+   bbcp_Thread_CanType(1);
 
 // Run a loop until we are killed checking that process we want is still alive
 //
-   while(!alldone 
-      && !(pdone = kill(monPID, 0) && ESRCH == errno)
-      && CondMon.Wait(wtime)) {}
+   while(!alldone && CondMon.Wait(wtime))
+        {if (kill(monPID, 0) && ESRCH == errno)
+            {DEBUG("Process " <<monPID <<" has died");
+             _exit(8);
+            }
+        }
 
-// If parent went away, immediately scuttle this process
+// Post the semaphore to indicate we are done. This is a far safer way to
+// synchronize exits than using pthread_join().
 //
-   if (pdone)
-      {DEBUG("Process " <<monPID <<" has died");
-       _exit(8);
-      }
+   monDone.Post();
 }
 
 /******************************************************************************/
@@ -90,7 +100,7 @@ void bbcp_ProcMon::Start(pid_t monit)
 
 // Run a thread to start the monitor
 //
-   if (retc = bbcp_Thread_Start(bbcp_MonProc, (void *)this, &mytid))
+   if (retc = bbcp_Thread_Run(bbcp_MonProc, (void *)this, &mytid))
       {DEBUG("Error " <<retc <<" starting MonProc thread.");}
       else {DEBUG("Thread " <<mytid <<" monitoring process " <<monPID);}
    return;
@@ -112,7 +122,7 @@ void bbcp_ProcMon::Start(int seclim, bbcp_BuffPool *buffpool)
 
 // Run a thread to start the monitor
 //
-   if (retc = bbcp_Thread_Start(bbcp_MonProc, (void *)this, &mytid))
+   if (retc = bbcp_Thread_Run(bbcp_MonProc, (void *)this, &mytid))
       {DEBUG("Error " <<retc <<" starting buffpool monitor thread.");}
       else {DEBUG("Thread " <<mytid <<" monitoring buffpool.");}
    return;
@@ -130,7 +140,7 @@ void bbcp_ProcMon::Stop()
    if (mytid) 
       {DEBUG("Process monitor " <<mytid <<" stopped.");
        CondMon.Signal();
-       bbcp_Thread_Wait(mytid);
+       monDone.Wait();
        mytid = 0;
       }
    return;

@@ -20,9 +20,9 @@ public:
 
         int          Seek(long long offv) {return 0;}
 
-        ssize_t      Read(char *buff, size_t rdsz) {return 0;}
+        ssize_t      Read(char *buff, size_t rdsz);
 
-        ssize_t      Read(const struct iovec *iovp, int iovn) {return 0;}
+        ssize_t      Read(const struct iovec *iovp, int iovn);
 
         ssize_t      Write(char *buff, size_t wrsz);
 
@@ -31,7 +31,7 @@ public:
 
         ssize_t      Write(const struct iovec *iovp, int iovn);
 
-             bbcp_IO_Null() {}
+             bbcp_IO_Null(int fd) : bbcp_IO(fd) {}
             ~bbcp_IO_Null() {}
 
 protected:

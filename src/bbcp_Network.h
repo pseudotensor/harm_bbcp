@@ -24,37 +24,52 @@ public:
 
 bbcp_Link   *Accept();
 
+int          AutoTune() {return ATune;}
+
 int          Bind(int minport, int maxport, int tries=1, int timeout=-1);
 
-bbcp_Link   *Connect(char *host, int port, int  wsize, int retries=0, int rwait=1);
+bbcp_Link   *Connect(char *host, int port, int retries=0, int rwait=1);
 
 void         findPort(int &minport, int &maxport);
 
+void         Flow(int isSRC);
+
 char        *FullHostName(char *host=0, int asipaddr=0);
 
-int          MaxWSize();
+int          MaxWSize(int isSink);
 
 int          MaxSSize() {return maxSegment;}
 
 int          getWBSize(int xfd, int srwant);
-int          setWBSize(const char *who, int xfd, int wbsz);
+
+int          QoS(int newQoS=-1);
+
+int          setWindow(int wsz, int noAT=0);
 
 void         unBind() {if (iofd >= 0) {close(iofd); iofd = Portnum = -1;}}
 
-             bbcp_Network() {iofd = Portnum = -1; maxWindow = maxSegment = 0;}
+             bbcp_Network();
             ~bbcp_Network() {unBind();}
 
 private:
 
+int        accWait;
+int        ATune;
 int        iofd;
-int        Portnum;
-int        maxWindow;
+int        maxRcvBuff;
+int        maxSndBuff;
 int        maxSegment;
+int        netQoS;
+int        Portnum;
+int        protID;
+int        Sender;
+int        Window;
+int        WinSOP;
 
 int   getHostAddr(char *hostname, struct sockaddr_in &InetAddr);
 char *getHostName(struct sockaddr_in &addr);
 int   Retry(int retries, int rwait);
-int   setOpts(const char *who, int iofd, int wbsz=0);
+void  setOpts(const char *who, int iofd);
 int   setSegSz(const char *who, int iofd);
 char *Peername(int snum);
 };

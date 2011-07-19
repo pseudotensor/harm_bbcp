@@ -29,6 +29,7 @@ extern bbcp_System bbcp_OS;
 #define MAXLL  (long long)~(((unsigned long long)1)<<(sizeof(long long)*8-1))
 //                                                            1234567890
 #define isDEVNULL(x) (!strcmp(x, "/dev/null") || !strncmp(x, "/dev/null/", 10))
+#define isDEVZERO(x) (!strcmp(x, "/dev/zero") || !strncmp(x, "/dev/zero/", 10))
   
 /******************************************************************************/
 /*                            A p p l i c a b l e                             */
@@ -55,6 +56,18 @@ int bbcp_FS_Null::Applicable(const char *path)
 }
 
 /******************************************************************************/
+/*                               g e t S i z e                                */
+/******************************************************************************/
+  
+long long bbcp_FS_Null::getSize(int fd, long long *bsz)
+{
+// For null file systems blocksize is 8K (nothing special)
+//
+   if (bsz) *bsz = 8192;
+   return (fd ? 0 : MAXLL);
+}
+
+/******************************************************************************/
 /*                                  O p e n                                   */
 /******************************************************************************/
 
@@ -66,11 +79,12 @@ bbcp_File *bbcp_FS_Null::Open(const char *fn, int opts, int mode)
 // For null filesystems, we simply create a dummy IO object to provide
 // eof on a read and throw-away on a write.
 //
-   if (isDEVNULL(fn)) iob =  new bbcp_IO_Null();
-      else {if ((FD = (mode ? open(fn,opts,mode) : open(fn,opts))) < 0)
-               return (bbcp_File *)0;
-            iob =  new bbcp_IO(FD);
-           }
+        if (!mode && isDEVZERO(fn)) iob =  new bbcp_IO_Null(0);
+   else if ( mode && isDEVNULL(fn)) iob =  new bbcp_IO_Null(-1);
+   else {if ((FD = (mode ? open(fn,opts,mode) : open(fn,opts))) < 0)
+            return (bbcp_File *)0;
+         iob =  new bbcp_IO(FD);
+        }
    return new bbcp_File(fn, iob, (bbcp_FileSystem *)this);
 }
  

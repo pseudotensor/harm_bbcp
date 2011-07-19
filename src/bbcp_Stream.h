@@ -108,8 +108,8 @@ char        *LastLine() {return recp;}
 // Write a record to a stream, if a length is not given, then the buffer must
 // be null terminated and this defines the length (the null is not written).
 //
-int          Put(const char *data, const int dlen);
-inline int   Put(const char *data) {return Put(data, (const int)strlen(data));}
+int          Put(const char *data, int dlen);
+inline int   Put(const char *data) {return Put(data, strlen(data));}
 
 // Write record fragments to a stream. The list of fragment/length pairs ends
 // when a null pointer is encountered.

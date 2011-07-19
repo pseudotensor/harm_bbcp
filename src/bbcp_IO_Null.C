@@ -13,6 +13,52 @@
 #include <unistd.h>
 #include "bbcp_IO_Null.h"
 
+
+/******************************************************************************/
+/*                                  R e a d                                   */
+/******************************************************************************/
+  
+ssize_t bbcp_IO_Null::Read(char *buff, size_t rdsz)
+{
+
+// Read data into the buffer
+//
+   xfrtime.Start();
+   xfrbytes += rdsz; xfrseek = xfrbytes;
+   if (*buff) memset(buff, 0, rdsz);
+   xfrtime.Stop();
+
+// All done
+//
+   return rdsz;
+}
+
+ssize_t bbcp_IO_Null::Read(const struct iovec *iovp, int iovn)
+{
+   ssize_t nbytes = 0;
+   int i;
+
+// Add up the bytes to be read
+//
+   for (i = 0; i < iovn; i++)
+       {if (*((char *)iovp[i].iov_base))
+            memset(iovp[i].iov_base, 0, iovp[i].iov_len);
+        nbytes += iovp[i].iov_len;
+       }
+
+// Read data into the buffer. Note that logging only occurs once even though
+// we may execute the read multiple times simply because a readv() is an all
+// or nothing operation and EINTR's rarely if ever happen on a readv().
+//
+   xfrtime.Start();
+   xfrbytes += nbytes; xfrseek = xfrbytes;
+   xfrtime.Stop();
+
+// All done
+//
+   return nbytes;
+}
+
 /******************************************************************************/
 /*                                 W r i t e                                  */
 /******************************************************************************/

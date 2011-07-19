@@ -50,7 +50,6 @@ bbcp_ZCX::bbcp_ZCX(bbcp_BuffPool *ib, bbcp_BuffPool *rb, bbcp_BuffPool *ob,
     Obuff  = ob;
     Clvl   = clvl;
     iofd   = xfd;
-    snum   = 0;
     cbytes = 0; 
     TID    = 0;
 
@@ -116,7 +115,6 @@ int bbcp_ZCX::Process()
          if (!ZStream.avail_out)
             {obp->blen = outsz;
              obp->boff = outbytes; outbytes += outsz;
-             obp->snum = snum;
              Obuff->putFullBuff(obp);
              if (!(obp = Obuff->getEmptyBuff())) return 132;
              ZStream.next_out  = (Bytef *)obp->data;
@@ -129,7 +127,6 @@ int bbcp_ZCX::Process()
 //
    if (obp->blen = outsz - ZStream.avail_out)
       {obp->boff = outbytes; outbytes += obp->blen;
-       obp->snum = snum;
        Obuff->putFullBuff(obp);
        if (!(obp = Obuff->getEmptyBuff())) return 132;
       }
@@ -153,7 +150,6 @@ int bbcp_ZCX::Process()
    Rbuff->putEmptyBuff(ibp);
    obp->blen = 0;
    obp->boff = outbytes;
-   obp->snum = snum;
    Obuff->putFullBuff(obp);
    return 0;
 }
@@ -179,6 +175,6 @@ int bbcp_ZCX::Zfailure(int zerr, const char *oper, char *Zmsg)
     if (Ibuff != Rbuff) Rbuff->Abort();
     Obuff->Abort();
 
-    if (Zmsg) return bbcp_Fmsg("Zlib", (const char *)Zmsg, (char *)oper, txt2);
-    return bbcp_Emsg("Zlib", zerr, oper,  txt2, (Zmsg ? Zmsg : (char *)""));
+    if (Zmsg) return bbcp_Fmsg("Zlib", Zmsg, oper, txt2);
+    return bbcp_Emsg("Zlib", zerr, oper,  txt2, (Zmsg ? Zmsg : ""));
 }
