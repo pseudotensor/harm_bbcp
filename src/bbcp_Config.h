@@ -177,7 +177,7 @@ int   Unbuff(char *Opts);
 #define bbcp_LOGEXP   0x20000000
 #define bbcp_LOGGING  0x3f000000
 
-#define BBCP_MAXSTREAMS 64
+#define BBCP_MAXSTREAMS 254
 #define BBCP_MINPMONSEC  1
 
 #define BBCP_DFLTMINPORT 5031

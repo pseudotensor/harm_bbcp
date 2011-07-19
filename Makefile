@@ -197,6 +197,15 @@ makeLinuxx86_64:
 	INCLUDE="$(ENVINCLUDE)" \
 	LIBS="$(LNXLIBS64)"
 
+makeLinuxunknown:
+	@make $(MKPARMS)  \
+	CC=$(LNXCC) \
+	BB=$(LNXcc) \
+	CFLAGS="$(ENVCFLAGS) $(LNXOPT)" \
+	BFLAGS="$(ENVCFLAGS) $(LNXOPT_B)" \
+	INCLUDE="$(ENVINCLUDE)" \
+	LIBS="$(LNXLIBS64)"
+
 Darwin:
 	@MACOSX_DEPLOYMENT_TARGET=10.5;\
 	make $(MKPARMS)  \
@@ -208,12 +217,12 @@ Darwin:
 
 UNICOS/mp:
 	@make $(MKPARMS)  \
- 	CC=$(LNXCC) \
- 	BB=$(LNXcc) \
- 	CFLAGS="$(ENVCFLAGS) $(LNXOPT)" \
+	CC=$(LNXCC) \
+	BB=$(LNXcc) \
+	CFLAGS="$(ENVCFLAGS) $(LNXOPT)" \
 	BFLAGS="$(ENVCFLAGS) $(LNXOPT_B)" \
- 	INCLUDE="$(ENVINCLUDE)" \
- 	LIBS="$(LNXLIBS)"
+	INCLUDE="$(ENVINCLUDE)" \
+	LIBS="$(LNXLIBS)"
 
 SunOS:
 	@make $(MKPARMS)  \

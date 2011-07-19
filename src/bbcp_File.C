@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <stdio.h>
 #include "bbcp_Platform.h"
 #include "bbcp_ChkSum.h"
 #include "bbcp_Config.h"
@@ -161,7 +162,7 @@ int bbcp_File::Passthru(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP,
 {
     bbcp_Buffer *outbuff;
     bbcp_ChkSum *csObj;
-    long long Offset = 0;
+    long long Offset = nextoffset;
     int csLen, csVer, numadd, maxbufs, maxadds = nstrms;
     int rc = 0, unordered = !(bbcp_Config.Options & bbcp_ORDER);
 
@@ -186,6 +187,7 @@ int bbcp_File::Passthru(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP,
 
      // Check if this is an eof marker
      //
+     //  cerr <<nstrms <<" Passt " <<outbuff->blen <<'@' <<outbuff->boff <<endl;
         if (!(outbuff->blen))
            {iBP->putEmptyBuff(outbuff); nstrms--; continue;}
 
@@ -239,7 +241,7 @@ int bbcp_File::Passthru(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP,
       {outbuff->blen = 0; outbuff->boff = Offset;
        oBP->putFullBuff(outbuff);
       } else {
-       if (!rc) rc = 132;
+       if (!rc) rc = -ENOBUFS;
        oBP->Abort(); iBP->Abort();
       }
 
@@ -264,6 +266,14 @@ int bbcp_File::Read_All(bbcp_BuffPool &inPool, int Vn)
 //
    if ((bytesLeft = FSp->getSize(IOB->FD())) < 0)
       {bbcp_Emsg("Read", static_cast<int>(-bytesLeft), "stat", iofn);
+       inPool.Abort(); return 200;
+      }
+
+// Adjust bytes left based on where we will be reading from
+//
+   bytesLeft -= nextoffset;
+   if (bytesLeft < 0)
+      {bbcp_Emsg("Read", ESPIPE, "stat", iofn);
        inPool.Abort(); return 200;
       }
 
@@ -535,9 +545,6 @@ int bbcp_File::Write_All(bbcp_BuffPool &inPool, int nstrms)
 //
    if (bbcp_Config.Options & bbcp_LOGRD) IOB->Log(0, "DISK");
 
-// Determine if direct I/O wanted
-//
-
 // Determine what kind of writing we will do here and do it
 //
    rc = (blockSize ? Write_Direct(iBP, &inPool, nstrms)
@@ -582,7 +589,7 @@ int bbcp_File::Write_Direct(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP, int nstrms)
       {
       // Obtain a full buffer
       //
-         if (!(bP = iBP->getFullBuff())) return 132;
+         if (!(bP = iBP->getFullBuff())) return -ENOBUFS;
 
       // Check if this is an eof marker
       //
@@ -629,15 +636,15 @@ int bbcp_File::Write_Normal(bbcp_BuffPool *iBP, bbcp_BuffPool *oBP, int nstrms)
       {
       // Obtain a full buffer
       //
-         if (!(bP = iBP->getFullBuff())) return 132;
+         if (!(bP = iBP->getFullBuff())) return -ENOBUFS;
 
       // Check if this is an eof marker
       //
+      // cerr <<nstrms <<" Write " <<bP->blen <<'@' <<bP->boff <<endl;
          if (!(bP->blen)) {iBP->putEmptyBuff(bP); nstrms--; continue;}
 
       // Do a normal write
       //
-      // cerr <<"Write " <<bP->blen <<'@' <<bP->boff <<endl;
          if ((wlen=IOB->Write(bP->data, bP->blen, bP->boff)) <= 0) break;
          oBP->putEmptyBuff(bP);
       }
