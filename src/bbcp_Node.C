@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <stdio.h>
 #include "bbcp_Config.h"
 #include "bbcp_Emsg.h"
 #include "bbcp_Node.h"
