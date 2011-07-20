@@ -16,8 +16,9 @@ AIXLIBS    =  -q64 -L/usr/lib -lz -lpthreads
 
 BSDLIBS    =  /usr/lib/libz.a -lc_r -pthread
 
-LNXLIBS32  =  /usr/lib/libz.a   -lnsl -lpthread -lrt
-LNXLIBS64  =  /usr/lib64/libz.a -lnsl -lpthread -lrt
+LNXLIBS32  =  -lz   -lnsl -lpthread -lrt
+#LNXLIBS64  =  /usr/lib64/libz.a -lnsl -lpthread -lrt
+LNXLIBS64  =  -lz -lnsl -lpthread -lrt
 
 MACLIBS    =  -dynamic -L/usr/lib -lz                       -lpthread
 
