@@ -1,7 +1,23 @@
-nohup ~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' tg802609@ranch.tacc.utexas.edu:"thickdisk3abcdefgh thickdisk3.ijk" . >err3again.txt &
+
+BTW, bbcp is just like scp for the most part.
+
+In harm_bbcp, see: compile.txt and examplecommandline.txt
+
+Very easy.  Just svn co it, then compile on both computers for yourself, copy binary in bin/<machinename>/bbcp to ~/bin/bbcp and then use the examplecommandline.txt (2nd one for Kraken) if run on ki-jmck.
+
+The only  possible trick is you might stick in a "-z" switch at the front of the command line if bbcp doesn't start (related to firewalls).  Alternatively, on some machines you might have to start on one end (i.e. run command on ki-jmck vs. Kraken).
+
+All files are where I mentioned: ki-jmck:/data2/jmckinne/thickdisk7/dumps/
+
+They are links, but that shouldn't matter.  Just try one file if you like.
+
+
+
+
+nohup ~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' tg802609@ranch.tacc.utexas.edu:"thickdisk3abcdefgh thickdisk3.ijk" . >err3again.txt &
 
 
 # for ki-jmck to kraken:
 
-~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H bbcp' name@krakenfullDNSname:
+~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' name@krakenfullDNSname:
 
