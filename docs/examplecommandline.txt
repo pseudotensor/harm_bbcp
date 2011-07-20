@@ -21,4 +21,7 @@ They are links, but that shouldn't matter.  Just try one file if you like.
 
 ~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' <dir or file or files> name@krakenfullDNSname:
 
+# e.g. from ki-jmck to ki-rh42 (goes at 80MB/s):
 
+cd /data2/jmckinne/thickdisk7/dumps
+~/bin/bbcp -s 20 -b +100 -a -k -f -r -P 5 -V -T 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' -S 'ssh -x -a -oConnectTimeout=0 -oFallBackToRsh=no %I -l %U %H ~/bin/bbcp' gdump.bin jon@ki-rh42:/data/jon/
